@@ -1,4 +1,5 @@
-import { getPrevClose } from '@/lib/data/polygon';
+import { getGroupedDaily, getPrevClose } from '@/lib/data/polygon';
+import type { HistoricalBar } from '@/lib/data/types';
 
 const POLYGON = 'https://api.polygon.io';
 
@@ -71,6 +72,8 @@ export interface WhaleScanResult {
   alerts: WhaleAlert[];
   errors: Array<{ ticker: string; error: string }>;
   notes: string[];
+  cacheHit: boolean;
+  cacheAgeSec: number;
 }
 
 interface SnapshotContract {
@@ -106,9 +109,23 @@ async function fetchChain(ticker: string): Promise<SnapshotContract[]> {
   return all;
 }
 
-export async function scanTicker(ticker: string): Promise<WhaleAlert | null> {
+export async function scanTicker(
+  ticker: string,
+  preFetchedBar?: HistoricalBar,
+): Promise<WhaleAlert | null> {
+  const snapshotPromise = preFetchedBar
+    ? Promise.resolve({
+        ticker,
+        price: preFetchedBar.c,
+        prevClose: preFetchedBar.o,
+        changePct: ((preFetchedBar.c - preFetchedBar.o) / preFetchedBar.o) * 100,
+        volume: preFetchedBar.v,
+        timestamp: preFetchedBar.t,
+      })
+    : getPrevClose(ticker).catch(() => null);
+
   const [snapshot, contracts] = await Promise.all([
-    getPrevClose(ticker).catch(() => null),
+    snapshotPromise,
     fetchChain(ticker).catch(() => [] as SnapshotContract[]),
   ]);
 
@@ -249,16 +266,67 @@ export async function getActiveUniverse(): Promise<{ universe: string[]; notes: 
   return { universe: core, notes };
 }
 
-export async function runWhaleScan(universe?: string[]): Promise<WhaleScanResult> {
-  const { universe: defaultUni, notes } = await getActiveUniverse();
+interface CacheEntry {
+  result: WhaleScanResult;
+  expiresAt: number;
+  storedAt: number;
+}
+
+const CACHE_TTL_MS = 15 * 60 * 1000;
+const cache = new Map<string, CacheEntry>();
+
+function cacheKey(tickers: string[]): string {
+  return [...tickers].sort().join(',');
+}
+
+export async function runWhaleScan(
+  universe?: string[],
+  opts: { bypassCache?: boolean } = {},
+): Promise<WhaleScanResult> {
+  const { universe: defaultUni, notes: baseNotes } = await getActiveUniverse();
   const tickers = universe && universe.length > 0 ? universe : defaultUni;
+  const key = cacheKey(tickers);
+
+  if (!opts.bypassCache) {
+    const entry = cache.get(key);
+    if (entry && entry.expiresAt > Date.now()) {
+      const ageSec = Math.round((Date.now() - entry.storedAt) / 1000);
+      return {
+        ...entry.result,
+        cacheHit: true,
+        cacheAgeSec: ageSec,
+        notes: [
+          `Cache hit — scan from ${new Date(entry.result.scanTime).toLocaleTimeString()} (${ageSec}s ago). Refresh to re-scan.`,
+          ...entry.result.notes,
+        ],
+      };
+    }
+  }
+
+  const notes = [...baseNotes];
+  let groupedBars: Map<string, HistoricalBar> = new Map();
+  try {
+    const grouped = await getGroupedDaily();
+    groupedBars = grouped.bars;
+    if (groupedBars.size > 0) {
+      notes.push(
+        `Bulk stock prices: 1 grouped-aggregates call covered ${groupedBars.size} tickers for ${grouped.date}.`,
+      );
+    } else {
+      notes.push('Grouped daily returned empty — falling back to per-ticker prev close.');
+    }
+  } catch (e) {
+    notes.push(
+      `Grouped daily failed (${e instanceof Error ? e.message : 'unknown'}) — falling back to per-ticker prev close.`,
+    );
+  }
 
   const alerts: WhaleAlert[] = [];
   const errors: Array<{ ticker: string; error: string }> = [];
 
   for (const t of tickers) {
     try {
-      const alert = await scanTicker(t);
+      const alert = await scanTicker(t, groupedBars.get(t));
       if (alert) alerts.push(alert);
     } catch (e) {
       errors.push({ ticker: t, error: e instanceof Error ? e.message : String(e) });
@@ -267,14 +335,19 @@ export async function runWhaleScan(universe?: string[]): Promise<WhaleScanResult
 
   alerts.sort((a, b) => b.whaleScore - a.whaleScore);
 
-  return {
+  const result: WhaleScanResult = {
     scanTime: new Date().toISOString(),
     tickersScanned: tickers.length,
     alertsFound: alerts.length,
     alerts,
     errors,
     notes,
+    cacheHit: false,
+    cacheAgeSec: 0,
   };
+
+  cache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS, storedAt: Date.now() });
+  return result;
 }
 
 export function computeCombinedScore(

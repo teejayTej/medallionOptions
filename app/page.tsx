@@ -61,12 +61,15 @@ export default function Home() {
     }
   }
 
-  async function scanWhales() {
+  async function scanWhales(bypassCache: boolean = false) {
     setWhaleLoading(true);
     setWhaleError(null);
     try {
-      const q = whaleUniverse.trim() ? `?universe=${encodeURIComponent(whaleUniverse.trim())}` : '';
-      const res = await fetch(`/api/whales${q}`);
+      const params = new URLSearchParams();
+      if (whaleUniverse.trim()) params.set('universe', whaleUniverse.trim());
+      if (bypassCache) params.set('refresh', '1');
+      const qs = params.toString();
+      const res = await fetch(`/api/whales${qs ? `?${qs}` : ''}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as WhaleScanResult;
       setWhaleData(json);
@@ -102,7 +105,14 @@ export default function Home() {
           {tab === 'whales' && whaleData && (
             <div className="text-right text-xs text-zinc-500">
               <div>{whaleData.alertsFound} alerts · {whaleData.tickersScanned} scanned</div>
-              <div>{new Date(whaleData.scanTime).toLocaleTimeString()}</div>
+              <div>
+                {new Date(whaleData.scanTime).toLocaleTimeString()}
+                {whaleData.cacheHit && (
+                  <span className="ml-2 text-emerald-500 font-semibold">
+                    ⚡ cached · {whaleData.cacheAgeSec}s ago
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -282,18 +292,29 @@ export default function Home() {
                 className="bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm font-mono"
               />
             </label>
-            <button
-              onClick={scanWhales}
-              disabled={whaleLoading}
-              className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white font-medium px-5 py-2 rounded text-sm"
-            >
-              {whaleLoading ? 'Scanning…' : 'Scan Whales'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => scanWhales(false)}
+                disabled={whaleLoading}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white font-medium px-5 py-2 rounded text-sm"
+              >
+                {whaleLoading ? 'Scanning…' : 'Scan Whales'}
+              </button>
+              {whaleData && !whaleLoading && (
+                <button
+                  onClick={() => scanWhales(true)}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium px-4 py-2 rounded text-sm"
+                  title="Ignore cache and re-fetch from Polygon"
+                >
+                  ↻ Refresh
+                </button>
+              )}
+            </div>
           </div>
           <div className="text-xs text-zinc-500 mt-3">
             Scans options volume, C/P ratio, net delta, and large-volume contracts per ticker.
-            No OI delta, no block-trade side — data not available on your Polygon plan.
-            {whaleLoading && ' Curated 25-ticker scan takes ~10 min due to rate limit.'}
+            Results cached for 15 min. First scan: ~5 min for 25 tickers (1 bulk stock call + 25 chain calls).
+            Subsequent clicks within 15 min are instant.
           </div>
           {whaleError && <div className="text-xs text-red-400 mt-3">Error: {whaleError}</div>}
         </div>

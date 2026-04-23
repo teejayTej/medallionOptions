@@ -41,6 +41,32 @@ export async function getPrevClose(ticker: string): Promise<StockSnapshot> {
   };
 }
 
+export async function getGroupedDaily(
+  maxDaysBack: number = 5,
+): Promise<{ date: string; bars: Map<string, HistoricalBar> }> {
+  for (let i = 0; i < maxDaysBack; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const date = d.toISOString().slice(0, 10);
+    const url = `${BASE}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true&apiKey=${key()}`;
+    try {
+      const data = await fetchJSON<{
+        results?: Array<{ T: string; t: number; o: number; h: number; l: number; c: number; v: number }>;
+      }>(url);
+      if (data.results && data.results.length > 0) {
+        const bars = new Map<string, HistoricalBar>();
+        for (const r of data.results) {
+          bars.set(r.T, { t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v });
+        }
+        return { date, bars };
+      }
+    } catch {
+      // try an older date
+    }
+  }
+  return { date: '', bars: new Map() };
+}
+
 export async function getHistoricalBars(
   ticker: string,
   days: number = 300,
