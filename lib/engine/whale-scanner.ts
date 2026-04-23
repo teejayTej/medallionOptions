@@ -236,13 +236,15 @@ export async function scanTicker(ticker: string): Promise<WhaleAlert | null> {
 
 export async function getActiveUniverse(): Promise<{ universe: string[]; notes: string[] }> {
   const core = [
-    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'JPM', 'V', 'JNJ',
-    'SPY', 'QQQ', 'AMD', 'NFLX', 'BA', 'GS', 'DIS', 'COIN', 'PLTR', 'SQ',
-    'IWM', 'XLE', 'XLF', 'SOFI', 'ROKU', 'CRM', 'UBER', 'SHOP', 'SNOW', 'NET',
-    'SMCI', 'ARM', 'AVGO', 'MU', 'INTC', 'PYPL', 'ABNB', 'RIVN', 'MSTR', 'CRWD',
+    'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'TSLA', 'AMD',
+    'AVGO', 'SMCI', 'ARM', 'PLTR',
+    'SPY', 'QQQ', 'IWM',
+    'COIN', 'MSTR', 'RIVN',
+    'JPM', 'GS', 'BAC',
+    'NFLX', 'UBER', 'SHOP', 'CRWD',
   ];
   const notes: string[] = [
-    'Gainers/losers endpoint (403 on your Polygon plan) — core watchlist only.',
+    'Gainers/losers endpoint (403 on your Polygon plan) — curated 25-ticker high-options-activity list.',
   ];
   return { universe: core, notes };
 }

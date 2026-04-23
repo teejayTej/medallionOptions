@@ -273,7 +273,7 @@ export default function Home() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
             <label className="flex flex-col gap-1 text-xs">
-              <span className="text-zinc-400">Universe override (leave empty for core 40)</span>
+              <span className="text-zinc-400">Universe override (leave empty for curated 25)</span>
               <input
                 type="text"
                 value={whaleUniverse}
@@ -293,7 +293,7 @@ export default function Home() {
           <div className="text-xs text-zinc-500 mt-3">
             Scans options volume, C/P ratio, net delta, and large-volume contracts per ticker.
             No OI delta, no block-trade side — data not available on your Polygon plan.
-            {whaleLoading && ' Core universe (~40 tickers) takes ~15 min due to rate limit.'}
+            {whaleLoading && ' Curated 25-ticker scan takes ~10 min due to rate limit.'}
           </div>
           {whaleError && <div className="text-xs text-red-400 mt-3">Error: {whaleError}</div>}
         </div>
