@@ -25,11 +25,46 @@ async function fetchJSON<T>(url: string, attempt: number = 0): Promise<T> {
 }
 
 export type FlowSignal =
-  | 'BULLISH_FLOW'
-  | 'BULLISH_MOMENTUM'
-  | 'BEARISH_FLOW'
-  | 'BEARISH_DRIFT'
-  | 'NEUTRAL';
+  | 'BULLISH_CONVICTION'
+  | 'BEARISH_CONVICTION'
+  | 'BULLISH_HEDGE'
+  | 'BEARISH_HEDGE'
+  | 'CONTRARIAN_BULLISH'
+  | 'CONTRARIAN_BEARISH'
+  | 'MIXED_ACTIVITY'
+  | 'LOW_ACTIVITY';
+
+export type NetDeltaDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+export type VolumeDirection = 'CALL_HEAVY' | 'PUT_HEAVY' | 'BALANCED';
+
+export interface FlowAnalysis {
+  signal: FlowSignal;
+  netDelta: number;
+  netDeltaDirection: NetDeltaDirection;
+  volumeDirection: VolumeDirection;
+  agreementScore: number;
+  isContrarian: boolean;
+  confidence: number;
+  explanation: string;
+}
+
+export interface ContrarianSignal {
+  isContrarian: boolean;
+  type: 'EXTREME_FEAR' | 'EXTREME_GREED' | 'NONE';
+  score: number;
+  explanation: string;
+}
+
+export type SmartMoneySignal = 'ACCUMULATING' | 'HEDGING' | 'DISTRIBUTING' | 'NEUTRAL';
+
+export interface DeltaProfile {
+  atmCallVolume: number;
+  otmCallVolume: number;
+  atmPutVolume: number;
+  otmPutVolume: number;
+  convictionRatio: number;
+  smartMoneySignal: SmartMoneySignal;
+}
 
 export interface LargeContract {
   symbol: string;
@@ -43,6 +78,8 @@ export interface LargeContract {
   delta: number;
   iv: number;
 }
+
+export type TradeDirection = 'SELL_PUTS' | 'SELL_CALLS' | 'IRON_CONDOR' | 'NO_TRADE';
 
 export interface WhaleAlert {
   ticker: string;
@@ -62,6 +99,10 @@ export interface WhaleAlert {
   totalLargeNotional: number;
   whaleScore: number;
   flowSignal: FlowSignal;
+  flowAnalysis: FlowAnalysis;
+  contrarian: ContrarianSignal;
+  deltaProfile: DeltaProfile;
+  tradeDirection: TradeDirection;
   urgency: 'HIGH' | 'MEDIUM' | 'LOW';
 }
 
@@ -109,6 +150,238 @@ async function fetchChain(ticker: string): Promise<SnapshotContract[]> {
   return all;
 }
 
+export function classifyFlow(
+  callVolume: number,
+  putVolume: number,
+  netDelta: number,
+  volumeRatio: number,
+  priceChange: number,
+): FlowAnalysis {
+  const totalVol = callVolume + putVolume;
+  if (totalVol === 0 || volumeRatio < 1.2) {
+    return {
+      signal: 'LOW_ACTIVITY',
+      netDelta,
+      netDeltaDirection: 'NEUTRAL',
+      volumeDirection: 'BALANCED',
+      agreementScore: 0,
+      isContrarian: false,
+      confidence: 0,
+      explanation: 'No significant options activity.',
+    };
+  }
+
+  const cpRatio = putVolume > 0 ? callVolume / putVolume : 10;
+  const volumeDirection: VolumeDirection =
+    cpRatio > 1.3 ? 'CALL_HEAVY' : cpRatio < 0.77 ? 'PUT_HEAVY' : 'BALANCED';
+
+  const deltaThreshold = Math.max(2000, totalVol * 0.01);
+  const netDeltaDirection: NetDeltaDirection =
+    netDelta > deltaThreshold ? 'BULLISH' : netDelta < -deltaThreshold ? 'BEARISH' : 'NEUTRAL';
+
+  const isContrarian =
+    (volumeDirection === 'PUT_HEAVY' && netDeltaDirection === 'BULLISH') ||
+    (volumeDirection === 'CALL_HEAVY' && netDeltaDirection === 'BEARISH');
+
+  let agreementScore = 50;
+  if (volumeDirection === 'CALL_HEAVY' && netDeltaDirection === 'BULLISH') agreementScore = 90;
+  else if (volumeDirection === 'PUT_HEAVY' && netDeltaDirection === 'BEARISH') agreementScore = 90;
+  else if (isContrarian) agreementScore = 20;
+
+  void priceChange;
+
+  let signal: FlowSignal;
+  let explanation: string;
+  let confidence: number;
+
+  if (isContrarian && volumeDirection === 'PUT_HEAVY' && netDeltaDirection === 'BULLISH') {
+    if (volumeRatio > 3.0 && Math.abs(netDelta) > deltaThreshold * 3) {
+      signal = 'CONTRARIAN_BULLISH';
+      confidence = 0.85;
+      explanation =
+        `Extreme put volume (C/P ${cpRatio.toFixed(2)}) but net Δ is +${netDelta.toFixed(0)}. ` +
+        `Puts are likely hedges on existing long positions — directional conviction is bullish ` +
+        `despite surface-level bearish appearance. Consistent with pre-catalyst protection.`;
+    } else {
+      signal = 'BULLISH_HEDGE';
+      confidence = 0.65;
+      explanation = `Put volume > call volume but net Δ is positive. Likely hedging of long exposure.`;
+    }
+  } else if (isContrarian && volumeDirection === 'CALL_HEAVY' && netDeltaDirection === 'BEARISH') {
+    if (volumeRatio > 3.0 && Math.abs(netDelta) > deltaThreshold * 3) {
+      signal = 'CONTRARIAN_BEARISH';
+      confidence = 0.8;
+      explanation =
+        `Heavy call volume (C/P ${cpRatio.toFixed(2)}) but net Δ is ${netDelta.toFixed(0)}. ` +
+        `Calls may be sold (income) or hedges on short positions. Potential top signal.`;
+    } else {
+      signal = 'BEARISH_HEDGE';
+      confidence = 0.6;
+      explanation = `Call volume > put volume but net Δ is negative. Mixed institutional signals.`;
+    }
+  } else if (netDeltaDirection === 'BULLISH' && volumeRatio > 1.5) {
+    signal = 'BULLISH_CONVICTION';
+    confidence = 0.75;
+    explanation =
+      `Strong positive net Δ (+${netDelta.toFixed(0)}) with ${volumeRatio.toFixed(1)}× volume. ` +
+      `Volume and delta agree on bullish direction.`;
+  } else if (netDeltaDirection === 'BEARISH' && volumeRatio > 1.5) {
+    signal = 'BEARISH_CONVICTION';
+    confidence = 0.75;
+    explanation =
+      `Strong negative net Δ (${netDelta.toFixed(0)}) with ${volumeRatio.toFixed(1)}× volume. ` +
+      `Volume and delta agree on bearish direction.`;
+  } else if (volumeRatio > 2.0 && netDeltaDirection === 'NEUTRAL') {
+    signal = 'MIXED_ACTIVITY';
+    confidence = 0.5;
+    explanation = `High volume (${volumeRatio.toFixed(1)}×) but net Δ near zero. Both sides active.`;
+  } else {
+    signal = 'LOW_ACTIVITY';
+    confidence = 0.3;
+    explanation = 'No clear institutional signal.';
+  }
+
+  return {
+    signal,
+    netDelta,
+    netDeltaDirection,
+    volumeDirection,
+    agreementScore,
+    isContrarian,
+    confidence,
+    explanation,
+  };
+}
+
+export function detectContrarianSetup(
+  callPutRatio: number,
+  volumeRatio: number,
+  netDelta: number,
+  priceChange: number,
+  ivRank: number,
+): ContrarianSignal {
+  const fearScore =
+    (callPutRatio < 0.3 ? 30 : callPutRatio < 0.5 ? 20 : callPutRatio < 0.7 ? 10 : 0) +
+    (volumeRatio > 5 ? 25 : volumeRatio > 3 ? 18 : volumeRatio > 2 ? 10 : 0) +
+    (priceChange < -0.03 ? 15 : priceChange < -0.01 ? 8 : 0) +
+    (ivRank > 80 ? 15 : ivRank > 60 ? 8 : 0) +
+    (netDelta > 5000 ? 15 : netDelta > 0 ? 8 : 0);
+
+  const greedScore =
+    (callPutRatio > 3.0 ? 30 : callPutRatio > 2.0 ? 20 : callPutRatio > 1.5 ? 10 : 0) +
+    (volumeRatio > 5 ? 25 : volumeRatio > 3 ? 18 : volumeRatio > 2 ? 10 : 0) +
+    (priceChange > 0.03 ? 15 : priceChange > 0.01 ? 8 : 0) +
+    (ivRank > 80 ? 15 : ivRank > 60 ? 8 : 0) +
+    (netDelta < -5000 ? 15 : netDelta < 0 ? 8 : 0);
+
+  if (fearScore >= 50) {
+    return {
+      isContrarian: true,
+      type: 'EXTREME_FEAR',
+      score: Math.min(100, fearScore),
+      explanation:
+        `Extreme put buying (C/P ${callPutRatio.toFixed(2)}) with ${volumeRatio.toFixed(1)}× volume. ` +
+        `Net Δ ${netDelta > 0 ? 'confirms smart money is actually bullish' : 'aligns with bearish sentiment'}.`,
+    };
+  }
+  if (greedScore >= 50) {
+    return {
+      isContrarian: true,
+      type: 'EXTREME_GREED',
+      score: Math.min(100, greedScore),
+      explanation:
+        `Extreme call buying (C/P ${callPutRatio.toFixed(2)}) with ${volumeRatio.toFixed(1)}× volume. ` +
+        `Net Δ ${netDelta < 0 ? 'confirms smart money is actually hedging' : 'aligns with bullish sentiment'}.`,
+    };
+  }
+  return { isContrarian: false, type: 'NONE', score: 0, explanation: 'No contrarian setup detected.' };
+}
+
+export function classifyDeltaProfile(
+  atmCallVol: number,
+  otmCallVol: number,
+  atmPutVol: number,
+  otmPutVol: number,
+): DeltaProfile {
+  const totalATM = atmCallVol + atmPutVol;
+  const totalOTM = otmCallVol + otmPutVol;
+  const convictionRatio = totalOTM > 0 ? totalATM / totalOTM : totalATM > 0 ? 10 : 1;
+
+  let smartMoneySignal: SmartMoneySignal;
+  if (atmCallVol > atmPutVol * 2 && convictionRatio > 1.5) {
+    smartMoneySignal = 'ACCUMULATING';
+  } else if (otmPutVol > atmCallVol * 2 && convictionRatio < 0.7) {
+    smartMoneySignal = 'HEDGING';
+  } else if (atmPutVol > atmCallVol * 2) {
+    smartMoneySignal = 'DISTRIBUTING';
+  } else {
+    smartMoneySignal = 'NEUTRAL';
+  }
+
+  return {
+    atmCallVolume: atmCallVol,
+    otmCallVolume: otmCallVol,
+    atmPutVolume: atmPutVol,
+    otmPutVolume: otmPutVol,
+    convictionRatio,
+    smartMoneySignal,
+  };
+}
+
+export function computeWhaleScoreV2(
+  volumeRatio: number,
+  totalLargeNotional: number,
+  flow: FlowAnalysis,
+  contrarian: ContrarianSignal,
+  deltaProfile: DeltaProfile,
+): number {
+  let score = 0;
+  if (volumeRatio > 5.0) score += 25;
+  else if (volumeRatio > 3.0) score += 20;
+  else if (volumeRatio > 2.0) score += 15;
+  else if (volumeRatio > 1.5) score += 8;
+
+  if (totalLargeNotional > 2_000_000) score += 20;
+  else if (totalLargeNotional > 500_000) score += 14;
+  else if (totalLargeNotional > 100_000) score += 8;
+
+  if (flow.signal === 'BULLISH_CONVICTION' || flow.signal === 'BEARISH_CONVICTION') score += 20;
+  else if (flow.signal === 'CONTRARIAN_BULLISH' || flow.signal === 'CONTRARIAN_BEARISH') score += 18;
+  else if (flow.signal === 'BULLISH_HEDGE' || flow.signal === 'BEARISH_HEDGE') score += 10;
+
+  if (contrarian.isContrarian) {
+    score += Math.round(contrarian.score * 0.15);
+  }
+
+  if (deltaProfile.smartMoneySignal === 'ACCUMULATING') score += 20;
+  else if (deltaProfile.smartMoneySignal === 'HEDGING') score += 15;
+  else if (deltaProfile.smartMoneySignal === 'DISTRIBUTING') score += 12;
+
+  return Math.min(100, score);
+}
+
+export function whaleTradeDirection(
+  flow: FlowAnalysis,
+  deltaProfile: DeltaProfile,
+): TradeDirection {
+  if (
+    flow.signal === 'CONTRARIAN_BULLISH' ||
+    (deltaProfile.smartMoneySignal === 'HEDGING' && flow.netDeltaDirection === 'BULLISH')
+  ) {
+    return 'SELL_PUTS';
+  }
+  if (
+    flow.signal === 'CONTRARIAN_BEARISH' ||
+    (deltaProfile.smartMoneySignal === 'DISTRIBUTING' && flow.netDeltaDirection === 'BEARISH')
+  ) {
+    return 'SELL_CALLS';
+  }
+  if (flow.signal === 'BULLISH_CONVICTION' || flow.signal === 'BULLISH_HEDGE') return 'SELL_PUTS';
+  if (flow.signal === 'BEARISH_CONVICTION' || flow.signal === 'BEARISH_HEDGE') return 'SELL_CALLS';
+  if (flow.signal === 'MIXED_ACTIVITY') return 'IRON_CONDOR';
+  return 'NO_TRADE';
+}
+
 export async function scanTicker(
   ticker: string,
   preFetchedBar?: HistoricalBar,
@@ -133,14 +406,16 @@ export async function scanTicker(
 
   const currentPrice = snapshot.price;
   const priceChange = snapshot.changePct / 100;
-  const priceUp = priceChange > 0.001;
-  const priceDown = priceChange < -0.001;
 
   let callVol = 0;
   let putVol = 0;
   let callOI = 0;
   let putOI = 0;
   let netDelta = 0;
+  let atmCallVol = 0;
+  let otmCallVol = 0;
+  let atmPutVol = 0;
+  let otmPutVol = 0;
   const largeContracts: LargeContract[] = [];
 
   const now = new Date();
@@ -156,14 +431,19 @@ export async function scanTicker(
     const delta = c.greeks?.delta ?? 0;
     const dayClose = c.day?.close ?? 0;
     const iv = c.implied_volatility ?? 0;
+    const isATM = Math.abs(delta) > 0.35;
 
     if (type === 'call') {
       callVol += vol;
       callOI += oi;
       netDelta += delta * vol;
+      if (isATM) atmCallVol += vol;
+      else otmCallVol += vol;
     } else if (type === 'put') {
       putVol += vol;
       putOI += oi;
+      if (isATM) atmPutVol += vol;
+      else otmPutVol += vol;
     }
 
     if (oi > 0 && vol > 0 && vol > oi * 0.3) {
@@ -196,37 +476,13 @@ export async function scanTicker(
   largeContracts.sort((a, b) => b.estimatedNotional - a.estimatedNotional);
   const totalLargeNotional = largeContracts.reduce((a, b) => a + b.estimatedNotional, 0);
 
-  let flowSignal: FlowSignal;
-  if (priceUp && volumeRatio > 1.5 && cpRatio > 1.3) flowSignal = 'BULLISH_FLOW';
-  else if (priceUp && volumeRatio <= 1.5) flowSignal = 'BULLISH_MOMENTUM';
-  else if (priceDown && volumeRatio > 1.5 && cpRatio < 0.8) flowSignal = 'BEARISH_FLOW';
-  else if (priceDown && volumeRatio <= 1.5) flowSignal = 'BEARISH_DRIFT';
-  else flowSignal = 'NEUTRAL';
+  const flowAnalysis = classifyFlow(callVol, putVol, netDelta, volumeRatio, priceChange);
+  const contrarian = detectContrarianSetup(cpRatio, volumeRatio, netDelta, priceChange, 0);
+  const deltaProfile = classifyDeltaProfile(atmCallVol, otmCallVol, atmPutVol, otmPutVol);
+  const tradeDirection = whaleTradeDirection(flowAnalysis, deltaProfile);
+  const score = computeWhaleScoreV2(volumeRatio, totalLargeNotional, flowAnalysis, contrarian, deltaProfile);
 
-  let score = 0;
-  if (volumeRatio > 5.0) score += 35;
-  else if (volumeRatio > 3.0) score += 28;
-  else if (volumeRatio > 2.0) score += 20;
-  else if (volumeRatio > 1.5) score += 12;
-
-  if (totalLargeNotional > 2_000_000) score += 30;
-  else if (totalLargeNotional > 1_000_000) score += 24;
-  else if (totalLargeNotional > 500_000) score += 18;
-  else if (totalLargeNotional > 100_000) score += 10;
-  else if (totalLargeNotional > 20_000) score += 5;
-
-  if (cpRatio > 3.0 || cpRatio < 0.33) score += 20;
-  else if (cpRatio > 2.0 || cpRatio < 0.5) score += 14;
-  else if (cpRatio > 1.5 || cpRatio < 0.67) score += 8;
-
-  const absDelta = Math.abs(netDelta);
-  if (absDelta > 5000) score += 15;
-  else if (absDelta > 2000) score += 10;
-  else if (absDelta > 500) score += 5;
-
-  score = Math.min(100, score);
   if (score < 15) return null;
-
   const urgency: WhaleAlert['urgency'] = score >= 55 ? 'HIGH' : score >= 30 ? 'MEDIUM' : 'LOW';
 
   return {
@@ -246,7 +502,11 @@ export async function scanTicker(
     largeContracts: largeContracts.slice(0, 10),
     totalLargeNotional,
     whaleScore: score,
-    flowSignal,
+    flowSignal: flowAnalysis.signal,
+    flowAnalysis,
+    contrarian,
+    deltaProfile,
+    tradeDirection,
     urgency,
   };
 }
@@ -261,7 +521,8 @@ export async function getActiveUniverse(): Promise<{ universe: string[]; notes: 
     'NFLX', 'UBER', 'SHOP', 'CRWD',
   ];
   const notes: string[] = [
-    'Gainers/losers endpoint (403 on your Polygon plan) — curated 25-ticker high-options-activity list.',
+    'Gainers/losers endpoint (403 on your Polygon plan) — curated 26-ticker high-options-activity list.',
+    'Contrarian IV-rank input is 0 here (not computed in whale scanner); Medallion analyze uses real IVR.',
   ];
   return { universe: core, notes };
 }
@@ -272,11 +533,12 @@ interface CacheEntry {
   storedAt: number;
 }
 
+const CACHE_VERSION = 'v2';
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const cache = new Map<string, CacheEntry>();
 
 function cacheKey(tickers: string[]): string {
-  return [...tickers].sort().join(',');
+  return `${CACHE_VERSION}:${[...tickers].sort().join(',')}`;
 }
 
 export async function runWhaleScan(
@@ -355,32 +617,29 @@ export function computeCombinedScore(
   whale: WhaleAlert,
 ): {
   combined: number;
-  tradeDirection: 'SELL_PUTS' | 'SELL_CALLS' | 'IRON_CONDOR' | 'NO_TRADE';
+  tradeDirection: TradeDirection;
 } {
-  const isBullish = whale.flowSignal === 'BULLISH_FLOW' || whale.flowSignal === 'BULLISH_MOMENTUM';
-  const isBearish = whale.flowSignal === 'BEARISH_FLOW' || whale.flowSignal === 'BEARISH_DRIFT';
+  const tradeDirection = whale.tradeDirection;
 
-  let tradeDirection: 'SELL_PUTS' | 'SELL_CALLS' | 'IRON_CONDOR' | 'NO_TRADE';
   let dirScore: number;
-
-  if (isBullish && whale.flowSignal === 'BULLISH_FLOW') {
-    tradeDirection = 'SELL_PUTS';
-    dirScore = medallionScore;
-  } else if (isBearish && whale.flowSignal === 'BEARISH_FLOW') {
-    tradeDirection = 'SELL_CALLS';
-    dirScore = medallionScore;
-  } else if (whale.whaleScore > 40 && whale.flowSignal === 'NEUTRAL') {
-    tradeDirection = 'IRON_CONDOR';
+  if (tradeDirection === 'SELL_PUTS' || tradeDirection === 'SELL_CALLS') {
+    const boosted =
+      whale.flowAnalysis.signal === 'CONTRARIAN_BULLISH' ||
+      whale.flowAnalysis.signal === 'CONTRARIAN_BEARISH';
+    dirScore = boosted ? medallionScore : medallionScore;
+  } else if (tradeDirection === 'IRON_CONDOR') {
     dirScore = medallionScore * 0.7;
   } else {
-    tradeDirection =
-      whale.whaleScore > 30 ? (isBullish ? 'SELL_PUTS' : 'SELL_CALLS') : 'NO_TRADE';
     dirScore = medallionScore * 0.5;
   }
 
   const combined = Math.min(
     100,
-    Math.round(whale.whaleScore * 0.45 + dirScore * 0.35 + Math.min(100, whale.volumeRatio * 15) * 0.2),
+    Math.round(
+      whale.whaleScore * 0.45 +
+        dirScore * 0.35 +
+        Math.min(100, whale.volumeRatio * 15) * 0.2,
+    ),
   );
 
   return { combined, tradeDirection };

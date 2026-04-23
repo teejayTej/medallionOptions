@@ -566,11 +566,32 @@ function TicketBox({ ticket }: { ticket: TradeTicket }) {
 }
 
 function flowColor(f: WhaleAlert['flowSignal']): string {
-  if (f === 'BULLISH_FLOW') return 'text-emerald-400';
-  if (f === 'BULLISH_MOMENTUM') return 'text-emerald-500';
-  if (f === 'BEARISH_FLOW') return 'text-red-400';
-  if (f === 'BEARISH_DRIFT') return 'text-red-500';
-  return 'text-zinc-400';
+  if (f === 'BULLISH_CONVICTION') return 'text-emerald-400';
+  if (f === 'CONTRARIAN_BULLISH') return 'text-cyan-400';
+  if (f === 'BULLISH_HEDGE') return 'text-emerald-500';
+  if (f === 'BEARISH_CONVICTION') return 'text-red-400';
+  if (f === 'CONTRARIAN_BEARISH') return 'text-fuchsia-400';
+  if (f === 'BEARISH_HEDGE') return 'text-red-500';
+  if (f === 'MIXED_ACTIVITY') return 'text-amber-400';
+  return 'text-zinc-500';
+}
+
+function flowLabel(f: WhaleAlert['flowSignal']): string {
+  return f.replace(/_/g, ' ');
+}
+
+function directionColor(d: WhaleAlert['tradeDirection']): string {
+  if (d === 'SELL_PUTS') return 'text-emerald-400';
+  if (d === 'SELL_CALLS') return 'text-red-400';
+  if (d === 'IRON_CONDOR') return 'text-amber-400';
+  return 'text-zinc-500';
+}
+
+function smartMoneyColor(s: WhaleAlert['deltaProfile']['smartMoneySignal']): string {
+  if (s === 'ACCUMULATING') return 'bg-emerald-900/40 text-emerald-300 border-emerald-800';
+  if (s === 'HEDGING') return 'bg-cyan-900/40 text-cyan-300 border-cyan-800';
+  if (s === 'DISTRIBUTING') return 'bg-red-900/40 text-red-300 border-red-800';
+  return 'bg-zinc-900 text-zinc-400 border-zinc-800';
 }
 
 function WhaleCard({ whale, onAnalyze }: { whale: WhaleAlert; onAnalyze: () => void }) {
@@ -598,9 +619,23 @@ function WhaleCard({ whale, onAnalyze }: { whale: WhaleAlert; onAnalyze: () => v
       </div>
 
       <div className="px-4 py-3 border-b border-zinc-800">
-        <div className={`text-xs font-semibold tracking-wider ${flowColor(whale.flowSignal)}`}>
-          {whale.flowSignal.replace('_', ' ')}
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className={`text-xs font-semibold tracking-wider ${flowColor(whale.flowSignal)}`}>
+            {whale.flowAnalysis.isContrarian && '⚡ '}{flowLabel(whale.flowSignal)}
+          </span>
+          <span className={`text-[10px] font-semibold uppercase tracking-wider ${directionColor(whale.tradeDirection)}`}>
+            → {whale.tradeDirection.replace('_', ' ')}
+          </span>
         </div>
+        <div className="text-[11px] text-zinc-400 leading-snug">
+          {whale.flowAnalysis.explanation}
+        </div>
+        {whale.contrarian.isContrarian && (
+          <div className="mt-2 text-[11px] text-amber-300 bg-amber-900/10 border border-amber-900/30 rounded px-2 py-1">
+            <span className="font-semibold">{whale.contrarian.type.replace('_', ' ')} · score {whale.contrarian.score}</span>
+            {' — '}{whale.contrarian.explanation}
+          </div>
+        )}
       </div>
 
       <div className="px-4 py-3 border-b border-zinc-800">
@@ -611,6 +646,27 @@ function WhaleCard({ whale, onAnalyze }: { whale: WhaleAlert; onAnalyze: () => v
           <Stat label="Calls" value={whale.callVolume.toLocaleString()} />
           <Stat label="Puts" value={whale.putVolume.toLocaleString()} />
           <Stat label="OI" value={whale.totalOI.toLocaleString()} />
+        </div>
+      </div>
+
+      <div className="px-4 py-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Delta profile</span>
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${smartMoneyColor(whale.deltaProfile.smartMoneySignal)}`}>
+            {whale.deltaProfile.smartMoneySignal}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] font-mono">
+          <div className="text-zinc-500">ATM calls</div>
+          <div className="text-right text-emerald-400">{whale.deltaProfile.atmCallVolume.toLocaleString()}</div>
+          <div className="text-zinc-500">OTM calls</div>
+          <div className="text-right text-emerald-600">{whale.deltaProfile.otmCallVolume.toLocaleString()}</div>
+          <div className="text-zinc-500">ATM puts</div>
+          <div className="text-right text-red-400">{whale.deltaProfile.atmPutVolume.toLocaleString()}</div>
+          <div className="text-zinc-500">OTM puts</div>
+          <div className="text-right text-red-600">{whale.deltaProfile.otmPutVolume.toLocaleString()}</div>
+          <div className="text-zinc-500">Conviction (ATM/OTM)</div>
+          <div className="text-right">{whale.deltaProfile.convictionRatio.toFixed(2)}×</div>
         </div>
       </div>
 
