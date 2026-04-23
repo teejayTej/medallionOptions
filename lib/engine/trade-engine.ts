@@ -261,6 +261,10 @@ export function evaluateGates(s: Signals, regime: Regime, score: number): Gates 
   else callBlocks.push(`Z-score ${s.zscore.toFixed(2)} — not overbought`);
   if (s.ivRank > 40) callReasons.push(`IV Rank ${s.ivRank.toFixed(0)}% > 40%`);
   else callBlocks.push(`IV Rank ${s.ivRank.toFixed(0)}% < 40%`);
+  if (s.vrp > 0.03) callReasons.push(`VRP ${(s.vrp * 100).toFixed(1)}% > 3%`);
+  else callBlocks.push(`VRP ${(s.vrp * 100).toFixed(1)}% < 3%`);
+  if (score >= 40) callReasons.push(`Score ${score} ≥ 40`);
+  else callBlocks.push(`Score ${score} < 40`);
   const callPass = callBlocks.length === 0;
 
   const icReasons: string[] = [];
@@ -288,15 +292,16 @@ export function selectBestContract(
 ): OptionContract | null {
   const { targetDelta, targetDTE } = regime;
   const dteRange = 12;
+  const dteCutoffBuffer = 26;
   const candidates = chain.filter(
     (o) =>
       o.type === type &&
-      o.dte >= targetDTE - dteRange &&
+      o.dte >= Math.max(targetDTE - dteRange, dteCutoffBuffer) &&
       o.dte <= targetDTE + dteRange &&
       Math.abs(o.delta) > 0.05 &&
       Math.abs(o.delta) < 0.5 &&
       o.mid > 0.05 &&
-      o.openInterest > 10,
+      o.openInterest > 100,
   );
   if (candidates.length === 0) return null;
   candidates.sort(
