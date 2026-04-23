@@ -27,7 +27,7 @@ interface AnalyzeResponse {
   }>;
 }
 
-const DEFAULT_UNIVERSE = 'AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,SPY,QQQ,AMD';
+const DEFAULT_UNIVERSE = 'AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,SPY,QQQ,AMD,INTC';
 
 type Tab = 'analyze' | 'whales';
 

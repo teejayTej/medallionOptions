@@ -254,7 +254,7 @@ export async function scanTicker(
 export async function getActiveUniverse(): Promise<{ universe: string[]; notes: string[] }> {
   const core = [
     'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'TSLA', 'AMD',
-    'AVGO', 'SMCI', 'ARM', 'PLTR',
+    'AVGO', 'SMCI', 'ARM', 'PLTR', 'INTC',
     'SPY', 'QQQ', 'IWM',
     'COIN', 'MSTR', 'RIVN',
     'JPM', 'GS', 'BAC',
