@@ -27,11 +27,12 @@ export interface Position {
 
 const KEY = 'medallion.positions.v1';
 const listeners = new Set<() => void>();
+const EMPTY: Position[] = [];
 let cache: Position[] | null = null;
 
 function read(): Position[] {
   if (cache !== null) return cache;
-  if (typeof window === 'undefined') return [];
+  if (typeof window === 'undefined') return EMPTY;
   try {
     const raw = window.localStorage.getItem(KEY);
     cache = raw ? (JSON.parse(raw) as Position[]) : [];
@@ -90,7 +91,7 @@ export function usePositions(): Position[] {
       return () => listeners.delete(cb);
     },
     () => read(),
-    () => [],
+    () => EMPTY,
   );
 }
 
