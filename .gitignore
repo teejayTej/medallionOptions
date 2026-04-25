@@ -36,6 +36,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Claude Code session state — only launch.json is tracked
+.claude/*
+!.claude/launch.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

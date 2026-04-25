@@ -1,26 +1,59 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Obsidian background depth tiers */
+  --color-obs-void: #06090f;
+  --color-obs-surface: #0b1120;
+  --color-obs-elevated: #111a2e;
+  --color-obs-overlay: #182340;
+
+  /* Borders */
+  --color-obs-border-subtle: #1a2540;
+  --color-obs-border-med: #243356;
+  --color-obs-border-strong: #2d4070;
+
+  /* Text */
+  --color-obs-text-1: #f0f4fa;
+  --color-obs-text-2: #a4b4cc;
+  --color-obs-text-3: #5e7190;
+  --color-obs-text-4: #3a4e6e;
+
+  /* Semantic */
+  --color-obs-buy: #00e68a;
+  --color-obs-sell: #ff4d6a;
+  --color-obs-sell-call: #00c2ff;
+  --color-obs-iron-condor: #a78bfa;
+  --color-obs-strangle: #f472b6;
+  --color-obs-arb: #ff9a3c;
+  --color-obs-kalshi: #a78bfa;
+
+  --font-sans: var(--font-geist), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-jb), ui-monospace, Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-obs-void);
+  color: var(--color-obs-text-1);
+  font-family: var(--font-sans);
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1, "zero" 1;
 }
+
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--color-obs-border-subtle); border-radius: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes obs-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 154, 60, 0.55), inset 0 0 0 1px #ff9a3c; }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 154, 60, 0.00), inset 0 0 0 1px #ff9a3c; }
+}
+@keyframes obs-blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+.obs-pulse { animation: obs-pulse 1.8s ease-in-out infinite; }
+.obs-blink { animation: obs-blink 1.6s ease-in-out infinite; }
