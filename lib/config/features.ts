@@ -9,6 +9,7 @@ export const FEATURES = {
   V5_CONTRACT_RULES: false,
   V5_EXITS: false,
   V5_PORTFOLIO: false,
+  V5_FUNNEL: false,
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURES;
