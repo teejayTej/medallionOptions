@@ -8,6 +8,7 @@ export const FEATURES = {
   V5_SCORING: false,
   V5_CONTRACT_RULES: false,
   V5_EXITS: false,
+  V5_PORTFOLIO: false,
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURES;

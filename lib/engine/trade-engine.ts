@@ -1,5 +1,10 @@
 import type { OptionContract } from '@/lib/data/types';
 import { FEATURES } from '@/lib/config/features';
+import {
+  computePositionSizeV5,
+  type DrawdownState,
+  type StreakState,
+} from '@/lib/engine/portfolio';
 
 export interface Signals {
   zscore: number;
@@ -313,17 +318,49 @@ export function selectBestContract(
   return candidates[0];
 }
 
+export interface V5SizingContext {
+  streak: StreakState;
+  drawdown: DrawdownState;
+}
+
 export function calculatePositionSize(
   c: OptionContract,
   portfolioValue: number,
   regime: Regime,
-): { contracts: number; kellyFraction: number; maxRisk: number; buyingPowerRequired: number } {
+  v5Context?: V5SizingContext,
+): { contracts: number; kellyFraction: number; maxRisk: number; buyingPowerRequired: number; halt?: boolean } {
   const winRate = 1 - Math.abs(c.delta);
   const credit = c.mid;
   const avgWin = credit * 0.5;
   const avgLoss = credit * 2.0;
-  const b = avgWin / avgLoss;
-  const rawKelly = (winRate * b - (1 - winRate)) / b;
+  const winLossRatio = avgWin / avgLoss;
+
+  // V5 Phase 5 — half-Kelly + streak survival + DD circuit breaker.
+  // Falls through to V4 quarter-Kelly when flag is off or context missing.
+  if (FEATURES.V5_PORTFOLIO && v5Context) {
+    const out = computePositionSizeV5({
+      winRate,
+      winLossRatio,
+      regimeMultiplier: regime.sizeMultiplier,
+      streak: v5Context.streak,
+      drawdown: v5Context.drawdown,
+    });
+    if (out.halt) {
+      return { contracts: 0, kellyFraction: 0, maxRisk: 0, buyingPowerRequired: 0, halt: true };
+    }
+    const maxRiskDollarsV5 = portfolioValue * out.kellyFraction;
+    const bpPerContractV5 = c.strike * 100;
+    const contractsV5 = Math.max(1, Math.floor(maxRiskDollarsV5 / (credit * 2 * 100)));
+    return {
+      contracts: contractsV5,
+      kellyFraction: out.kellyFraction,
+      maxRisk: contractsV5 * credit * 2 * 100,
+      buyingPowerRequired: contractsV5 * bpPerContractV5,
+    };
+  }
+
+  // V4 quarter-Kelly path (default).
+  const rawKelly = (winRate * winLossRatio - (1 - winRate)) / winLossRatio;
   const kellyFraction = Math.max(0, Math.min(rawKelly * 0.25 * regime.sizeMultiplier, 0.05));
   const maxRiskDollars = portfolioValue * kellyFraction;
   const bpPerContract = c.strike * 100;
