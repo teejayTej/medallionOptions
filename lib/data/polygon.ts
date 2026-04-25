@@ -2,6 +2,13 @@ import type { HistoricalBar, OptionContract, StockSnapshot } from './types';
 
 const BASE = 'https://api.polygon.io';
 
+if (typeof process !== 'undefined' && process.env.POLYGON_PLAN_TIER && process.env.POLYGON_PLAN_TIER !== 'developer' && process.env.POLYGON_PLAN_TIER !== 'advanced') {
+  console.warn(
+    `[polygon] POLYGON_PLAN_TIER="${process.env.POLYGON_PLAN_TIER}" — V5 features (historical trades, expired contracts) ` +
+    `require Developer or higher. Calls to getOptionTrades() will return 403. Set POLYGON_PLAN_TIER=developer in .env.local after upgrading.`,
+  );
+}
+
 function key(): string {
   const k = process.env.POLYGON_API_KEY;
   if (!k) throw new Error('POLYGON_API_KEY missing');
@@ -166,4 +173,96 @@ export async function getOptionsChain(
     pages++;
   }
   return all;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// V5 Phase 1 — Historical OPRA trades + expired-contract reference.
+// Both require Polygon Options Developer ($79) tier or higher.
+// ──────────────────────────────────────────────────────────────────
+
+export interface PolygonTrade {
+  sip_timestamp: number;
+  price: number;
+  size: number;
+  exchange: number;
+  conditions: number[];
+  sequence_number?: number;
+}
+
+export interface TradesOptions {
+  timestamp_gte?: number;
+  timestamp_lte?: number;
+  order?: 'asc' | 'desc';
+  limit?: number;
+}
+
+export async function getOptionTrades(
+  occTicker: string,
+  opts: TradesOptions = {},
+): Promise<PolygonTrade[]> {
+  const trades: PolygonTrade[] = [];
+  const params = new URLSearchParams({ limit: String(opts.limit ?? 50000), order: opts.order ?? 'asc' });
+  if (opts.timestamp_gte !== undefined) params.set('timestamp.gte', String(opts.timestamp_gte));
+  if (opts.timestamp_lte !== undefined) params.set('timestamp.lte', String(opts.timestamp_lte));
+
+  let url: string | undefined =
+    `${BASE}/v3/trades/${encodeURIComponent(occTicker)}?${params.toString()}&apiKey=${key()}`;
+
+  let pages = 0;
+  while (url && pages < 100) {
+    const resp: { results?: PolygonTrade[]; next_url?: string } =
+      await fetchJSON<{ results?: PolygonTrade[]; next_url?: string }>(url);
+    if (resp.results) trades.push(...resp.results);
+    url = resp.next_url ? `${resp.next_url}&apiKey=${key()}` : undefined;
+    pages++;
+  }
+  return trades;
+}
+
+export interface ExpiredContractsParams {
+  underlying: string;
+  expiration_date_gte?: string;
+  expiration_date_lte?: string;
+  strike_price_gte?: number;
+  strike_price_lte?: number;
+  contract_type?: 'call' | 'put';
+}
+
+export interface ExpiredContractRef {
+  ticker: string;
+  underlying_ticker: string;
+  contract_type: 'call' | 'put';
+  expiration_date: string;
+  strike_price: number;
+  shares_per_contract: number;
+  exercise_style: string;
+  primary_exchange: string;
+  cfi: string;
+}
+
+export async function getContractsIncludingExpired(
+  params: ExpiredContractsParams,
+): Promise<ExpiredContractRef[]> {
+  const contracts: ExpiredContractRef[] = [];
+  const qs = new URLSearchParams({
+    underlying_ticker: params.underlying,
+    expired: 'true',
+    limit: '1000',
+  });
+  if (params.expiration_date_gte) qs.set('expiration_date.gte', params.expiration_date_gte);
+  if (params.expiration_date_lte) qs.set('expiration_date.lte', params.expiration_date_lte);
+  if (params.strike_price_gte !== undefined) qs.set('strike_price.gte', String(params.strike_price_gte));
+  if (params.strike_price_lte !== undefined) qs.set('strike_price.lte', String(params.strike_price_lte));
+  if (params.contract_type) qs.set('contract_type', params.contract_type);
+
+  let url: string | undefined = `${BASE}/v3/reference/options/contracts?${qs.toString()}&apiKey=${key()}`;
+  let pages = 0;
+  while (url && pages < 50) {
+    const resp: { results?: ExpiredContractRef[]; next_url?: string } =
+      await fetchJSON<{ results?: ExpiredContractRef[]; next_url?: string }>(url);
+    if (resp.results) contracts.push(...resp.results);
+    url = resp.next_url ? `${resp.next_url}&apiKey=${key()}` : undefined;
+    pages++;
+  }
+  return contracts;
 }
