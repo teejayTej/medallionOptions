@@ -1,4 +1,5 @@
 import type { OptionContract } from '@/lib/data/types';
+import { FEATURES } from '@/lib/config/features';
 
 export interface Signals {
   zscore: number;
@@ -67,6 +68,8 @@ export interface TradeTicket {
     breakeven: number;
   };
   reasoning: string[];
+  /** V5 Phase 3: present only when FEATURES.V5_CONTRACT_RULES is on. */
+  scaleInPlan?: ScaleInPlan;
 }
 
 export interface TickerAnalysis {
@@ -404,6 +407,8 @@ export function generateTradeTicket(
     },
     expectedPL: { maxProfit, maxLoss, expectedValue, winRate, breakeven },
     reasoning,
+    // V5 Phase 3 — every V5 ticket carries a scaleInPlan; legacy stays undefined.
+    ...(FEATURES.V5_CONTRACT_RULES ? { scaleInPlan: DEFAULT_SCALE_IN_PLAN } : {}),
   };
 }
 
@@ -463,3 +468,187 @@ export function analyzeTicker(
     notes,
   };
 }
+
+// ──────────────────────────────────────────────────────────────────
+// V5 Phase 3 — Archetype-specific contract selection.
+//
+// Squeeze setups (CONTRARIAN_BULLISH/BEARISH) stay closer to ATM because
+// dealer-hedge flow concentrates near high-OI strikes and squeezes
+// resolve in 3–10 days. Trend setups (BULLISH/BEARISH_CONVICTION) can
+// stretch further OTM because the time horizon supports it.
+//
+// Three-strike ladder (55/30/15 or 50/30/20) balances inner-strike
+// anchor (finances on moderate moves) against outer-strike tail
+// (captures the rare 5–10× winner).
+// ──────────────────────────────────────────────────────────────────
+
+export type V5Archetype =
+  | 'CONTRARIAN_BULLISH'
+  | 'BULLISH_CONVICTION'
+  | 'CONTRARIAN_BEARISH'
+  | 'BEARISH_CONVICTION';
+
+export interface ArchetypeContractRules {
+  deltaTarget: number;
+  deltaRange: [number, number];
+  dteTarget: number;
+  dteRange: [number, number];
+  strikeOffsetPct: number;
+  ladderWeights: [number, number, number];
+  ladderOffsets: [number, number, number];
+}
+
+export const CONTRACT_RULES: Record<V5Archetype, ArchetypeContractRules> = {
+  CONTRARIAN_BULLISH: {
+    deltaTarget: 0.35,
+    deltaRange: [0.28, 0.45],
+    dteTarget: 28,
+    dteRange: [21, 35],
+    strikeOffsetPct: 0.05,
+    ladderWeights: [0.55, 0.3, 0.15],
+    ladderOffsets: [0.03, 0.07, 0.12],
+  },
+  BULLISH_CONVICTION: {
+    deltaTarget: 0.3,
+    deltaRange: [0.22, 0.4],
+    dteTarget: 35,
+    dteRange: [28, 50],
+    strikeOffsetPct: 0.08,
+    ladderWeights: [0.5, 0.3, 0.2],
+    ladderOffsets: [0.05, 0.1, 0.15],
+  },
+  CONTRARIAN_BEARISH: {
+    deltaTarget: -0.35,
+    deltaRange: [-0.45, -0.28],
+    dteTarget: 28,
+    dteRange: [21, 35],
+    strikeOffsetPct: -0.04,
+    ladderWeights: [0.6, 0.25, 0.15],
+    ladderOffsets: [-0.03, -0.06, -0.1],
+  },
+  BEARISH_CONVICTION: {
+    deltaTarget: -0.3,
+    deltaRange: [-0.4, -0.22],
+    dteTarget: 35,
+    dteRange: [28, 50],
+    strikeOffsetPct: -0.07,
+    ladderWeights: [0.5, 0.3, 0.2],
+    ladderOffsets: [-0.05, -0.09, -0.14],
+  },
+};
+
+/**
+ * Liquidity gate. Rejects uninvestable contracts.
+ *
+ * Note on spread: the brief specifies spread ≤ 10% of mid via
+ * `last_quote.bid/ask`. Polygon Developer ($79) does NOT include
+ * NBBO quotes — that requires Advanced ($199). Our OptionContract.bid
+ * and ask are synthesized from `day.close ± 4%`, producing a constant
+ * 8% spread that always passes the 10% check. Until we add Advanced
+ * tier or Tradier, the spread component is effectively a no-op; OI
+ * and volume floors do the real liquidity work.
+ */
+export function passesLiquidityGate(c: OptionContract): boolean {
+  if (c.openInterest < 500) return false;
+  if (c.volume < 100) return false;
+  const mid = c.mid;
+  if (mid <= 0) return false;
+  if (c.bid <= 0 || c.ask <= 0) return false;
+  const spreadPct = (c.ask - c.bid) / mid;
+  return spreadPct <= 0.1;
+}
+
+export interface ContractOrder {
+  contract: OptionContract;
+  qty: number;
+  limitPrice: number;
+  ladderSlot: 0 | 1 | 2;
+  slotBudget: number;
+}
+
+function v5DaysBetween(a: Date, b: Date): number {
+  return Math.floor((b.getTime() - a.getTime()) / 86_400_000);
+}
+
+function nearestByStrike(candidates: OptionContract[], targetStrike: number): OptionContract {
+  return candidates.reduce((a, b) =>
+    Math.abs(b.strike - targetStrike) < Math.abs(a.strike - targetStrike) ? b : a,
+  );
+}
+
+function v5LimitPrice(c: OptionContract): number {
+  const spread = c.ask - c.bid;
+  // Pay slightly above mid to improve fill probability without crossing the spread.
+  return Math.round((c.mid + spread * 0.25) * 100) / 100;
+}
+
+/**
+ * Select a 3-strike ladder for the given archetype, or a single inner-strike
+ * contract if budget < $1500. Returns [] if no candidates pass filters.
+ */
+export function selectContract(
+  archetype: V5Archetype,
+  chain: OptionContract[],
+  spot: number,
+  budget: number,
+): ContractOrder[] {
+  const rules = CONTRACT_RULES[archetype];
+  const isCall = archetype.includes('BULLISH');
+  const targetType: OptionContract['type'] = isCall ? 'call' : 'put';
+
+  const candidates = chain
+    .filter((c) => c.type === targetType)
+    .filter((c) => c.dte >= rules.dteRange[0] && c.dte <= rules.dteRange[1])
+    .filter((c) => c.delta >= rules.deltaRange[0] && c.delta <= rules.deltaRange[1])
+    .filter(passesLiquidityGate);
+
+  if (candidates.length === 0) {
+    console.warn(`[selectContract] no candidates for ${archetype} (chain=${chain.length}, spot=${spot})`);
+    return [];
+  }
+
+  // Small budget: single inner-strike contract (no ladder).
+  if (budget < 1500) {
+    const targetStrike = spot * (1 + rules.ladderOffsets[0]);
+    const best = nearestByStrike(candidates, targetStrike);
+    const limitPrice = v5LimitPrice(best);
+    const qty = Math.max(1, Math.floor(budget / (best.ask * 100)));
+    return [{ contract: best, qty, limitPrice, ladderSlot: 0, slotBudget: budget }];
+  }
+
+  const orders: ContractOrder[] = [];
+  for (let i = 0 as 0 | 1 | 2; i < 3; i = (i + 1) as 0 | 1 | 2) {
+    const targetStrike = spot * (1 + rules.ladderOffsets[i]);
+    const best = nearestByStrike(candidates, targetStrike);
+    const slotBudget = budget * rules.ladderWeights[i];
+    const qty = Math.max(1, Math.floor(slotBudget / (best.ask * 100)));
+    const limitPrice = v5LimitPrice(best);
+    orders.push({ contract: best, qty, limitPrice, ladderSlot: i, slotBudget });
+  }
+  return orders;
+}
+
+/** Days-between helper exposed for tests. */
+export const _v5DaysBetween = v5DaysBetween;
+
+// ──────────────────────────────────────────────────────────────────
+// V5 Phase 3 — Scale-in convention.
+//
+// Initial 70% on signal bar. Reserve 30% deployed within 3 days only
+// if pullback ≤ 2% and signal still active. Reserve cancels on flow
+// reversal. Phase 4's exit-engine will own the daily monitoring loop.
+// ──────────────────────────────────────────────────────────────────
+
+export interface ScaleInPlan {
+  initialDeploymentPct: 0.7;
+  reserveDeploymentPct: 0.3;
+  reserveWindow: { days: 3; maxPullbackPct: 0.02 };
+  reserveCancellationTrigger: 'flow_reversal';
+}
+
+export const DEFAULT_SCALE_IN_PLAN: ScaleInPlan = {
+  initialDeploymentPct: 0.7,
+  reserveDeploymentPct: 0.3,
+  reserveWindow: { days: 3, maxPullbackPct: 0.02 },
+  reserveCancellationTrigger: 'flow_reversal',
+};
