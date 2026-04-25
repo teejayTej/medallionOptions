@@ -17,8 +17,130 @@ import {
   type TickerReference,
   type EarningsInfo,
 } from '@/lib/data/providers';
+import { FEATURES } from '@/lib/config/features';
 
 export type Tier = 'must_try' | 'top_10' | 'scanner' | 'blocked';
+
+// ──────────────────────────────────────────────────────────────────
+// V5 Phase 2 — Perfect Setup composite score.
+// Weights are calibrated to academic factor significance (Pan-Poteshman
+// 2006, Hu 2014, Chordia-Subrahmanyam 2004, Muravyev-Pearson-Pollet 2022).
+// Do NOT change weights without ≥ 50 paper trades of evidence.
+// ──────────────────────────────────────────────────────────────────
+
+export type PerfectSetupArchetype =
+  | 'CONTRARIAN_BULLISH'
+  | 'BULLISH_CONVICTION'
+  | 'CONTRARIAN_BEARISH'
+  | 'BEARISH_CONVICTION';
+
+export type DeltaProfileSignal = 'ACCUMULATING' | 'HEDGING' | 'DISTRIBUTING' | 'NEUTRAL';
+
+export interface PerfectSetupInputs {
+  netDeltaZ: number;
+  volumeRatio: number;
+  persistenceDays: number;
+  cumulativeAbnormalOI: number;
+  largeContractPremium: number;
+  deltaProfile: DeltaProfileSignal;
+  ivRank: number;
+  momentum12_1: number;
+  borrowFeeBps: number;
+  rsi14: number;
+  vrp: number;
+  archetype: PerfectSetupArchetype | null;
+}
+
+export const ENTRY_SCORE_THRESHOLD = 70;
+export const HIGH_CONVICTION_THRESHOLD = 82;
+
+/** Map whale-scanner flow signal to a Perfect Setup archetype. */
+export function mapWhaleSignalToArchetype(
+  signal: WhaleAlert['flowSignal'],
+): PerfectSetupArchetype | null {
+  if (signal === 'CONTRARIAN_BULLISH') return 'CONTRARIAN_BULLISH';
+  if (signal === 'CONTRARIAN_BEARISH') return 'CONTRARIAN_BEARISH';
+  if (signal === 'BULLISH_CONVICTION' || signal === 'BULLISH_HEDGE') return 'BULLISH_CONVICTION';
+  if (signal === 'BEARISH_CONVICTION' || signal === 'BEARISH_HEDGE') return 'BEARISH_CONVICTION';
+  return null;
+}
+
+function zToPoints(z: number, maxPoints: number): number {
+  const absZ = Math.abs(z);
+  if (absZ < 1.0) return 0;
+  if (absZ < 1.65) return maxPoints * 0.25;
+  if (absZ < 2.0) return maxPoints * 0.5;
+  if (absZ < 2.33) return maxPoints * 0.75;
+  if (absZ < 3.0) return maxPoints * 0.9;
+  return maxPoints;
+}
+
+function volumeRatioPoints(ratio: number): number {
+  if (ratio < 2) return 0;
+  if (ratio < 3) return 3;
+  if (ratio < 5) return 6;
+  if (ratio < 7) return 9;
+  if (ratio < 10) return 12;
+  if (ratio < 15) return 14;
+  return 15;
+}
+
+function persistencePoints(days: number, cumOIsigma: number): number {
+  let p = 0;
+  if (days >= 2) p += 4;
+  if (days >= 3) p += 4;
+  if (days >= 5) p += 3;
+  if (cumOIsigma >= 1.5) p += 4;
+  return Math.min(15, p);
+}
+
+const PROFILE_BONUS: Record<PerfectSetupArchetype, Partial<Record<DeltaProfileSignal, number>>> = {
+  BULLISH_CONVICTION: { ACCUMULATING: 10, NEUTRAL: 3 },
+  CONTRARIAN_BULLISH: { HEDGING: 10, NEUTRAL: 3 },
+  BEARISH_CONVICTION: { DISTRIBUTING: 10, NEUTRAL: 3 },
+  CONTRARIAN_BEARISH: { DISTRIBUTING: 10, NEUTRAL: 3 },
+};
+
+export function computePerfectSetupScore(x: PerfectSetupInputs): number {
+  let score = 0;
+
+  score += zToPoints(x.netDeltaZ, 25);                      // 25 — informed-flow core
+  score += volumeRatioPoints(x.volumeRatio);                // 15 — institutional footprint
+  score += persistencePoints(x.persistenceDays, x.cumulativeAbnormalOI); // 15 — accumulation
+
+  // Large-contract premium: log scale past $100K floor, capped at 10
+  if (x.largeContractPremium >= 100_000) {
+    score += Math.min(10, 2 + 2 * Math.log10(x.largeContractPremium / 100_000));
+  }
+
+  // Delta profile — archetype-specific (max 10)
+  if (x.archetype) {
+    score += PROFILE_BONUS[x.archetype]?.[x.deltaProfile] ?? 0;
+  }
+
+  // IV Rank (max 8) — long premium favors cheap vol
+  if (x.ivRank < 30) score += 8;
+  else if (x.ivRank < 50) score += 5;
+  else if (x.ivRank > 80) score -= 3;
+
+  // Momentum 12-1 alignment (max 7)
+  const bullish = x.archetype === 'BULLISH_CONVICTION' || x.archetype === 'CONTRARIAN_BULLISH';
+  const alignedMomentum = bullish ? x.momentum12_1 : -x.momentum12_1;
+  score += Math.max(0, Math.min(7, alignedMomentum * 35));
+
+  // Borrow-fee penalty (max 5; Muravyev-Pearson-Pollet 2022)
+  if (x.borrowFeeBps < 50) score += 5;
+  else if (x.borrowFeeBps < 200) score += 2;
+  else score -= 3;
+
+  // RSI regime (max 3)
+  if (x.rsi14 > 30 && x.rsi14 < 70) score += 3;
+
+  // VRP cheap-vol bonus (max 2)
+  if (x.vrp < 0.02) score += 2;
+
+  return Math.max(0, Math.min(100, score));
+}
 
 export type TradeSide = 'BUY' | 'SELL';
 export type TradeStrategy = 'long_call' | 'long_put' | 'short_put' | 'short_call' | 'iron_condor';
@@ -371,15 +493,44 @@ export function scoreUnified(inputs: ScoreInputs): UnifiedScore {
   const regimeC = scoreRegimeFit(inputs.medallion?.regime);
   const liqC = scoreLiquidity(inputs.whale, inputs.chain);
 
-  const total = Math.round(
+  const v4Total = Math.round(
     whaleC * 0.3 + convC * 0.25 + ivE.score * 0.2 + regimeC * 0.15 + liqC * 0.1,
   );
 
+  // V5 Phase 2 — Perfect Setup composite (gated by feature flag).
+  let total = v4Total;
+  if (FEATURES.V5_SCORING && inputs.whale && inputs.medallion) {
+    const archetype = mapWhaleSignalToArchetype(inputs.whale.flowSignal);
+    total = computePerfectSetupScore({
+      netDeltaZ: inputs.whale.netDeltaZ,
+      volumeRatio: inputs.whale.volumeRatio,
+      persistenceDays: inputs.whale.persistenceDays,
+      cumulativeAbnormalOI: inputs.whale.cumulativeAbnormalOI,
+      largeContractPremium: inputs.whale.largeContractPremiumUSD,
+      deltaProfile: inputs.whale.deltaProfile.smartMoneySignal,
+      ivRank: inputs.medallion.signals.ivRank,
+      momentum12_1: inputs.medallion.signals.momentum12_1,
+      borrowFeeBps: inputs.whale.borrowFeeBps,
+      rsi14: inputs.medallion.signals.rsi,
+      vrp: inputs.medallion.signals.vrp,
+      archetype,
+    });
+  }
+
+  // V5 tier thresholds: must_try ≥ HIGH_CONVICTION_THRESHOLD (82),
+  // top_10 ≥ ENTRY_SCORE_THRESHOLD (70). Whale gates retained.
   let tier: Tier;
-  if (total >= 85 && whaleC >= 80) tier = 'must_try';
-  else if (total >= 70 && whaleC >= 60) tier = 'top_10';
-  else if (total >= 50) tier = 'scanner';
-  else tier = 'blocked';
+  if (FEATURES.V5_SCORING) {
+    if (total >= HIGH_CONVICTION_THRESHOLD && whaleC >= 80) tier = 'must_try';
+    else if (total >= ENTRY_SCORE_THRESHOLD && whaleC >= 60) tier = 'top_10';
+    else if (total >= 50) tier = 'scanner';
+    else tier = 'blocked';
+  } else {
+    if (total >= 85 && whaleC >= 80) tier = 'must_try';
+    else if (total >= 70 && whaleC >= 60) tier = 'top_10';
+    else if (total >= 50) tier = 'scanner';
+    else tier = 'blocked';
+  }
 
   const rec = recommendTrade(
     inputs.ticker,

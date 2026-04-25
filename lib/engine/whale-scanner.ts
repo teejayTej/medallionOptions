@@ -97,6 +97,16 @@ export interface WhaleAlert {
   putOI: number;
   largeContracts: LargeContract[];
   totalLargeNotional: number;
+  // V5 Phase 2 fields. The four marked TODO require cross-day persistence
+  // we don't yet store; they emit safe defaults (0 / false) until a
+  // history layer (sqlite/json) lands. The score function consumes them
+  // via PerfectSetupInputs and works correctly when fed real values.
+  netDeltaZ: number;                        // TODO: needs 60-day history
+  persistenceDays: number;                  // TODO: needs ≥ 5-day history
+  cumulativeAbnormalOI: number;             // TODO: needs 60-day OI history
+  hasConcurrentOppositeLegWithin5Min: boolean; // TODO: needs trade-tape access
+  largeContractPremiumUSD: number;          // sum of price × qty × 100 for today's large prints
+  borrowFeeBps: number;                     // hardcoded 50 — no free borrow-fee feed available
   whaleScore: number;
   flowSignal: FlowSignal;
   flowAnalysis: FlowAnalysis;
@@ -116,6 +126,23 @@ export interface WhaleScanResult {
   cacheHit: boolean;
   cacheAgeSec: number;
 }
+
+/**
+ * V5 Phase 2 — Z-score of current net delta vs a rolling baseline.
+ * Pure function. Returns 0 when history is too short (< 20 sessions)
+ * or has zero variance. Pass an empty array to get 0.
+ */
+export function computeNetDeltaZ(currentNetDelta: number, history: number[]): number {
+  if (history.length < 20) return 0;
+  const mean = history.reduce((a, b) => a + b, 0) / history.length;
+  const variance =
+    history.reduce((s, x) => s + (x - mean) ** 2, 0) / history.length;
+  const std = Math.sqrt(variance);
+  if (std === 0) return 0;
+  return (currentNetDelta - mean) / std;
+}
+
+const DEFAULT_BORROW_FEE_BPS = 50;
 
 interface SnapshotContract {
   details?: {
@@ -476,6 +503,19 @@ export async function scanTicker(
   largeContracts.sort((a, b) => b.estimatedNotional - a.estimatedNotional);
   const totalLargeNotional = largeContracts.reduce((a, b) => a + b.estimatedNotional, 0);
 
+  // V5 Phase 2 — premium = price × qty × 100 (options multiplier).
+  // We don't have per-trade tape access without /v3/trades calls, so we
+  // approximate with daily-close × volume per large contract.
+  const largeContractPremiumUSD = largeContracts.reduce((sum, c) => sum + c.estimatedNotional, 0);
+
+  // V5 Phase 2 — fields requiring cross-day persistence not yet built.
+  // Defaulting to neutral values; computePerfectSetupScore tolerates these.
+  const netDeltaZ = computeNetDeltaZ(netDelta, []);     // history layer pending
+  const persistenceDays = 0;                            // history layer pending
+  const cumulativeAbnormalOI = 0;                       // history layer pending
+  const hasConcurrentOppositeLegWithin5Min = false;     // trade-tape access pending
+  const borrowFeeBps = DEFAULT_BORROW_FEE_BPS;          // hardcoded; no free feed
+
   const flowAnalysis = classifyFlow(callVol, putVol, netDelta, volumeRatio, priceChange);
   const contrarian = detectContrarianSetup(cpRatio, volumeRatio, netDelta, priceChange, 0);
   const deltaProfile = classifyDeltaProfile(atmCallVol, otmCallVol, atmPutVol, otmPutVol);
@@ -501,6 +541,12 @@ export async function scanTicker(
     putOI,
     largeContracts: largeContracts.slice(0, 10),
     totalLargeNotional,
+    netDeltaZ,
+    persistenceDays,
+    cumulativeAbnormalOI,
+    hasConcurrentOppositeLegWithin5Min,
+    largeContractPremiumUSD,
+    borrowFeeBps,
     whaleScore: score,
     flowSignal: flowAnalysis.signal,
     flowAnalysis,
