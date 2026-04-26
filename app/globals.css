@@ -1,59 +1,122 @@
 @import "tailwindcss";
 
 @theme inline {
-  /* Obsidian background depth tiers */
-  --color-obs-void: #06090f;
-  --color-obs-surface: #0b1120;
-  --color-obs-elevated: #111a2e;
-  --color-obs-overlay: #182340;
-
-  /* Borders */
-  --color-obs-border-subtle: #1a2540;
-  --color-obs-border-med: #243356;
-  --color-obs-border-strong: #2d4070;
-
-  /* Text */
-  --color-obs-text-1: #f0f4fa;
-  --color-obs-text-2: #a4b4cc;
-  --color-obs-text-3: #5e7190;
-  --color-obs-text-4: #3a4e6e;
+  /* Obsidian tier system */
+  --color-obsidian-950: #0A0A0B;
+  --color-obsidian-900: #111114;
+  --color-obsidian-800: #1A1A1F;
+  --color-obsidian-700: #25252C;
 
   /* Semantic */
-  --color-obs-buy: #00e68a;
-  --color-obs-sell: #ff4d6a;
-  --color-obs-sell-call: #00c2ff;
-  --color-obs-iron-condor: #a78bfa;
-  --color-obs-strangle: #f472b6;
-  --color-obs-arb: #ff9a3c;
-  --color-obs-kalshi: #a78bfa;
+  --color-sage-400: #6FCF97;
+  --color-sage-500: #4FBF7F;
+  --color-terra-400: #EB5757;
+  --color-blue-400: #56CCF2;
+  --color-amber-400: #F2C94C;
 
-  --font-sans: var(--font-geist), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: var(--font-jb), ui-monospace, Menlo, monospace;
+  /* Text */
+  --color-text-100: #FAFAFA;
+  --color-text-300: #B4B4B8;
+  --color-text-500: #6F6F75;
+
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: var(--font-jb), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+:root {
+  --obsidian-950: #0A0A0B;
+  --obsidian-900: #111114;
+  --obsidian-800: #1A1A1F;
+  --obsidian-700: #25252C;
+
+  --sage-400: #6FCF97;
+  --sage-500: #4FBF7F;
+  --terra-400: #EB5757;
+  --blue-400: #56CCF2;
+  --amber-400: #F2C94C;
+
+  --text-100: #FAFAFA;
+  --text-300: #B4B4B8;
+  --text-500: #6F6F75;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-glow: rgba(111, 207, 151, 0.35);
+
+  --mono: var(--font-jb), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--color-obs-void);
-  color: var(--color-obs-text-1);
-  font-family: var(--font-sans);
-  letter-spacing: -0.005em;
+  background: var(--obsidian-950);
+  color: var(--text-100);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+button {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
+a { color: inherit; text-decoration: none; }
 
 .mono {
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum" 1, "zero" 1;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: var(--color-obs-border-subtle); border-radius: 4px; }
-*::-webkit-scrollbar-track { background: transparent; }
+::selection { background: rgba(111, 207, 151, 0.25); }
 
-@keyframes obs-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 154, 60, 0.55), inset 0 0 0 1px #ff9a3c; }
-  50%      { box-shadow: 0 0 0 6px rgba(255, 154, 60, 0.00), inset 0 0 0 1px #ff9a3c; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--obsidian-950); }
+::-webkit-scrollbar-thumb { background: var(--obsidian-700); border-radius: 5px; border: 2px solid var(--obsidian-950); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* Animations */
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(111, 207, 151, 0.45); }
+  80% { box-shadow: 0 0 0 8px rgba(111, 207, 151, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(111, 207, 151, 0); }
 }
-@keyframes obs-blink { 0%,100%{opacity:1} 50%{opacity:.35} }
-.obs-pulse { animation: obs-pulse 1.8s ease-in-out infinite; }
-.obs-blink { animation: obs-blink 1.6s ease-in-out infinite; }
+
+@keyframes scroll-tape {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes spark-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes modal-in {
+  from { transform: scale(0.96); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.anim-pulse { animation: pulse 1.6s infinite ease-out; }
+.anim-tape { animation: scroll-tape 90s linear infinite; }
+.anim-modal-in { animation: modal-in 220ms cubic-bezier(0.4, 0, 0.2, 1); }
+.spark-line {
+  fill: none;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: spark-draw 800ms ease-out forwards;
+}

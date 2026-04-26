@@ -1,21 +1,22 @@
 import type { CSSProperties, ReactNode } from 'react';
 
 const T = {
-  void: 'var(--color-obs-void)',
-  surface: 'var(--color-obs-surface)',
-  elevated: 'var(--color-obs-elevated)',
-  borderSubtle: 'var(--color-obs-border-subtle)',
-  borderMed: 'var(--color-obs-border-med)',
-  text1: 'var(--color-obs-text-1)',
-  text2: 'var(--color-obs-text-2)',
-  text3: 'var(--color-obs-text-3)',
-  text4: 'var(--color-obs-text-4)',
-  buy: 'var(--color-obs-buy)',
-  sell: 'var(--color-obs-sell)',
-  sellCall: 'var(--color-obs-sell-call)',
-  ironCondor: 'var(--color-obs-iron-condor)',
-  arb: 'var(--color-obs-arb)',
-  kalshi: 'var(--color-obs-kalshi)',
+  /** Backwards-compat aliases mapped to new design tokens. */
+  void: 'var(--obsidian-950)',
+  surface: 'var(--obsidian-800)',
+  elevated: 'var(--obsidian-900)',
+  borderSubtle: 'var(--border-subtle)',
+  borderMed: 'var(--border-strong)',
+  text1: 'var(--text-100)',
+  text2: 'var(--text-300)',
+  text3: 'var(--text-500)',
+  text4: 'var(--text-500)',
+  buy: 'var(--sage-400)',
+  sell: 'var(--terra-400)',
+  sellCall: 'var(--blue-400)',
+  ironCondor: 'var(--blue-400)',
+  arb: 'var(--amber-400)',
+  kalshi: 'var(--blue-400)',
 };
 
 export function ScoreRing({ score, size = 44, stroke = 4, label }: { score: number; size?: number; stroke?: number; label?: string }) {
