@@ -299,6 +299,20 @@ export function MustTryCard({
         </div>
       )}
 
+      {/* V5 metric strip — flow signal + archetype + delta profile (only when whale data present) */}
+      {scored.whale && (
+        <div className="flex items-center flex-wrap" style={{ gap: 6, position: 'relative', zIndex: 1 }}>
+          <V5Chip label={scored.whale.flowSignal.replace(/_/g, ' ')} tone={flowTone(scored.whale.flowSignal)} />
+          <V5Chip label={scored.whale.deltaProfile.smartMoneySignal} tone="neutral" />
+          {scored.whale.contrarian.isContrarian && (
+            <V5Chip label={`CONTRARIAN ${scored.whale.contrarian.score}`} tone="amber" />
+          )}
+          {scored.whale.borrowFeeBps > 100 && (
+            <V5Chip label={`BORROW ${scored.whale.borrowFeeBps}bps`} tone="terra" />
+          )}
+        </div>
+      )}
+
       {/* Foot meta: 3 fields */}
       <div className="grid grid-cols-3 gap-2" style={{ position: 'relative', zIndex: 1 }}>
         <FootMetric k="Whale" v={String(scored.score.components.whale)} first />
@@ -306,6 +320,44 @@ export function MustTryCard({
         <FootMetric k="IV Edge" v={String(scored.score.components.ivEdge)} />
       </div>
     </div>
+  );
+}
+
+function flowTone(signal: string): 'sage' | 'amber' | 'terra' | 'blue' | 'neutral' {
+  if (signal === 'BULLISH_CONVICTION' || signal === 'BULLISH_HEDGE') return 'sage';
+  if (signal === 'CONTRARIAN_BULLISH') return 'sage';
+  if (signal === 'BEARISH_CONVICTION' || signal === 'BEARISH_HEDGE') return 'terra';
+  if (signal === 'CONTRARIAN_BEARISH') return 'terra';
+  if (signal === 'MIXED_ACTIVITY') return 'amber';
+  return 'neutral';
+}
+
+function V5Chip({ label, tone }: { label: string; tone: 'sage' | 'amber' | 'terra' | 'blue' | 'neutral' }) {
+  const colors: Record<string, { fg: string; border: string; bg: string }> = {
+    sage:    { fg: 'var(--sage-400)',  border: 'rgba(111,207,151,0.35)', bg: 'rgba(111,207,151,0.08)' },
+    amber:   { fg: 'var(--amber-400)', border: 'rgba(242,201,76,0.35)',  bg: 'rgba(242,201,76,0.08)' },
+    terra:   { fg: 'var(--terra-400)', border: 'rgba(235,87,87,0.35)',   bg: 'rgba(235,87,87,0.08)' },
+    blue:    { fg: 'var(--blue-400)',  border: 'rgba(86,204,242,0.35)',  bg: 'rgba(86,204,242,0.08)' },
+    neutral: { fg: 'var(--text-300)',  border: 'var(--border-subtle)',   bg: 'transparent' },
+  };
+  const c = colors[tone];
+  return (
+    <span
+      className="mono"
+      style={{
+        fontSize: 9,
+        letterSpacing: '0.1em',
+        textTransform: 'uppercase',
+        padding: '3px 7px',
+        border: `1px solid ${c.border}`,
+        background: c.bg,
+        color: c.fg,
+        borderRadius: 3,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
   );
 }
 

@@ -632,12 +632,21 @@ export async function runWhaleScan(
   const alerts: WhaleAlert[] = [];
   const errors: Array<{ ticker: string; error: string }> = [];
 
-  for (const t of tickers) {
-    try {
-      const alert = await scanTicker(t, groupedBars.get(t));
-      if (alert) alerts.push(alert);
-    } catch (e) {
-      errors.push({ ticker: t, error: e instanceof Error ? e.message : String(e) });
+  // Parallel batches. Polygon Developer ($79) has effectively unlimited
+  // request rate so we no longer need the Starter-era serial loop.
+  const BATCH = 10;
+  for (let i = 0; i < tickers.length; i += BATCH) {
+    const slice = tickers.slice(i, i + BATCH);
+    const results = await Promise.all(
+      slice.map((t) =>
+        scanTicker(t, groupedBars.get(t))
+          .then((alert) => ({ t, alert, error: null as Error | null }))
+          .catch((e: Error) => ({ t, alert: null, error: e })),
+      ),
+    );
+    for (const r of results) {
+      if (r.alert) alerts.push(r.alert);
+      else if (r.error) errors.push({ ticker: r.t, error: r.error.message });
     }
   }
 

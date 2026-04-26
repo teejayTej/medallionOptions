@@ -17,9 +17,11 @@ interface QuoteResp {
 
 export default function CommandCenter() {
   const [tape, setTape] = useState<Array<{ tkr: string; q: QuoteResp | null }>>([]);
-  const [today, setToday] = useState<{ mustTry: ScoredTicker[]; topTen: ScoredTicker[]; vix?: number; regime: string | null; cacheHit: boolean; cacheAgeSec: number; counts: { universe: number; scored: number } } | null>(null);
+  const [today, setToday] = useState<{ mustTry: ScoredTicker[]; topTen: ScoredTicker[]; vix?: number; regime: string | null; cacheHit: boolean; cacheAgeSec: number; staleWhileRevalidate?: boolean; counts: { universe: number; scored: number } } | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loadingTape, setLoadingTape] = useState(true);
+  const [todayLoading, setTodayLoading] = useState(true);
+  const [todayError, setTodayError] = useState<string | null>(null);
   const positions = usePositions();
   const mounted = useHasMounted();
 
@@ -32,7 +34,20 @@ export default function CommandCenter() {
       setTape(TAPE_TICKERS.map((tkr, i) => ({ tkr, q: results[i] })));
       setLoadingTape(false);
     });
-    fetch('/api/today?limit=12').then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && d) setToday(d); }).catch(() => {});
+
+    // Today's scan — limit=6 for the homepage (we only show 6 opportunities here);
+    // reduces cold-start cost. Stale-while-revalidate kicks in if a recent scan
+    // exists, so most reloads return instantly.
+    setTodayLoading(true);
+    fetch('/api/today?limit=6')
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((d) => { if (!cancelled && d) setToday(d); })
+      .catch((e) => { if (!cancelled) setTodayError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!cancelled) setTodayLoading(false); });
+
     fetch('/api/news?limit=8').then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && d?.items) setNews(d.items); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -60,10 +75,25 @@ export default function CommandCenter() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, alignItems: 'start' }}>
-          <Card title="Top Opportunities" right={<Link href="/today" style={{ fontSize: 10.5, color: T.text3, textDecoration: 'none' }}>OPEN ALL →</Link>} pad={0}>
-            {!today ? (
-              <Loader msg="Loading scan…" />
-            ) : opportunities.length === 0 ? (
+          <Card
+            title="Top Opportunities"
+            right={
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {today?.staleWhileRevalidate && (
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--amber-400)', letterSpacing: '0.08em' }}>
+                    REFRESHING…
+                  </span>
+                )}
+                <Link href="/today" style={{ fontSize: 10.5, color: T.text3, textDecoration: 'none' }}>OPEN ALL →</Link>
+              </div>
+            }
+            pad={0}
+          >
+            {todayError ? (
+              <Empty msg={`Failed to load scan: ${todayError}`} />
+            ) : todayLoading && !today ? (
+              <Loader msg="Running first scan — 10–20 seconds. Subsequent loads are instant." />
+            ) : !today || opportunities.length === 0 ? (
               <Empty msg="No opportunities found in latest scan." />
             ) : (
               <div>

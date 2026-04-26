@@ -5,6 +5,18 @@
  * validation against paper trades.
  */
 export const FEATURES = {
+  /**
+   * V5_SCORING stays OFF. Reason: 4 of the 6 PerfectSetupInputs fields
+   * (netDeltaZ, persistenceDays, cumulativeAbnormalOI, hasConcurrent-
+   * OppositeLeg5m) emit safe defaults at runtime because we don't yet
+   * have a persistence layer. Flipping the flag would tank live scores
+   * vs V4 by ~20-40 points (we tested — funnel produces 0 entries
+   * instead of expected count). Re-enable after persistence ships.
+   *
+   * UI cards still surface flowSignal / deltaProfile / archetype /
+   * contrarian / borrowFee — those fields are always populated on
+   * WhaleAlert regardless of this flag.
+   */
   V5_SCORING: false,
   V5_CONTRACT_RULES: false,
   V5_EXITS: false,
