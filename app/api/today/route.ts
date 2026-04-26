@@ -68,9 +68,9 @@ async function scoreOne(
   }
 }
 
-function cacheKey(universe: string[] | undefined, portfolio: number): string {
+function cacheKey(universe: string[] | undefined, portfolio: number, limit: number): string {
   const u = universe ? [...universe].sort().join(',') : 'default';
-  return `v1:${u}:${portfolio}`;
+  return `v1:${u}:${portfolio}:${limit}`;
 }
 
 async function buildFresh(
@@ -139,7 +139,8 @@ async function buildFresh(
   };
 }
 
-function backgroundRefresh(ck: string, universe: string[] | undefined, portfolio: number, maxAnalyze: number): void {
+function backgroundRefresh(universe: string[] | undefined, portfolio: number, maxAnalyze: number): void {
+  const ck = cacheKey(universe, portfolio, maxAnalyze);
   const entry = cache.get(ck);
   if (entry?.refreshing) return;
   cache.set(ck, { ...(entry ?? ({} as CacheEntry)), refreshing: true } as CacheEntry);
@@ -169,7 +170,7 @@ export async function GET(req: Request) {
   const refresh = url.searchParams.get('refresh') === '1';
   const maxAnalyze = parseInt(url.searchParams.get('limit') ?? '15', 10);
 
-  const ck = cacheKey(universe, portfolio);
+  const ck = cacheKey(universe, portfolio, maxAnalyze);
 
   // 1. Fresh cache hit — return immediately.
   if (!refresh) {
@@ -184,7 +185,7 @@ export async function GET(req: Request) {
     if (entry?.data) {
       const ageMs = Date.now() - entry.storedAt;
       if (ageMs < STALE_GRACE_MS) {
-        backgroundRefresh(ck, universe, portfolio, maxAnalyze);
+        backgroundRefresh(universe, portfolio, maxAnalyze);
         const ageSec = Math.round(ageMs / 1000);
         return Response.json({
           ...entry.data,

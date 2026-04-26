@@ -19,8 +19,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchJSON<T>(url: string, attempt: number = 0): Promise<T> {
   const res = await fetch(url, { cache: 'no-store' });
-  if (res.status === 429 && attempt < 6) {
-    const wait = 2000 * Math.pow(2, attempt);
+  // Bounded retry on 429: max 3 attempts, max 8s wait per attempt.
+  // Total worst-case wait per call: 1 + 2 + 4 = 7s. Earlier 6-attempt
+  // exponential could waste 126s per call which compounded to >1hr scans.
+  if (res.status === 429 && attempt < 3) {
+    const wait = 1000 * Math.pow(2, attempt);
     await sleep(wait);
     return fetchJSON<T>(url, attempt + 1);
   }
