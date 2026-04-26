@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { ScoredTicker } from '@/lib/engine/scoring';
 import { addPosition } from '@/lib/store/positions';
+import { Sparkline, SignalPill, fmtExp } from '@/components/obsidian/TradesView';
 
 export function TradeDetailModal({
   scored,
@@ -13,6 +14,7 @@ export function TradeDetailModal({
 }) {
   const { score, ticker, price, whale, medallion, reference, earnings } = scored;
   const rec = score.recommendation;
+  const [tracked, setTracked] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -44,204 +46,472 @@ export function TradeDetailModal({
         dteCutoffDate: rec.exitRules.dteCutoffDate,
       },
     });
-    onClose();
+    setTracked(true);
+    setTimeout(onClose, 800);
   }
+
+  const sparkData = (medallion as unknown as { prices?: number[] })?.prices?.slice(-90) ?? [];
 
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(5,5,8,0.7)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
+        zIndex: 100,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        overflowY: 'auto',
+        padding: '60px 24px',
+      }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-zinc-900 border border-zinc-800 rounded-lg max-w-2xl w-full my-8 overflow-hidden"
+        className="anim-modal-in"
+        style={{
+          width: 'min(1100px, 100%)',
+          background: 'var(--obsidian-900)',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 12,
+          overflow: 'hidden',
+        }}
       >
-        <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
-          <div>
-            <div className="flex items-baseline gap-3">
-              <span className="text-2xl font-mono font-bold">{ticker}</span>
-              <span className="text-sm text-zinc-500">${price.toFixed(2)}</span>
-              {reference.name && <span className="text-xs text-zinc-600">· {reference.name}</span>}
-            </div>
-            <div className="text-xs text-zinc-500 mt-1">
-              {reference.tier.toUpperCase()} cap
-              {reference.marketCap && ` · $${(reference.marketCap / 1e9).toFixed(1)}B`}
-              {' · '}{score.tier.replace('_', ' ').toUpperCase()} tier · score {score.total}
-            </div>
-          </div>
+        {/* Modal head */}
+        <div
+          className="flex items-center"
+          style={{
+            gap: 14,
+            padding: '16px 20px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <span className="mono" style={{ fontSize: 24, fontWeight: 600 }}>{ticker}</span>
+          <span
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: 'var(--text-500)',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+            }}
+          >
+            {reference.tier.toUpperCase()} · ${price.toFixed(2)} · TIER {score.tier.replace('_', ' ').toUpperCase()}
+          </span>
+          {rec && <SignalPill rec={rec} />}
           <button
             onClick={onClose}
-            className="text-zinc-500 hover:text-zinc-200 text-2xl leading-none"
-            aria-label="Close"
+            className="mono"
+            style={{
+              marginLeft: 'auto',
+              fontSize: 11,
+              color: 'var(--text-500)',
+              letterSpacing: '0.1em',
+              padding: '6px 10px',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 4,
+            }}
           >
-            ×
+            ESC
           </button>
         </div>
 
-        {rec ? (
-          <>
-            <div className="px-5 py-4 border-b border-zinc-800">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Contract</div>
-              <code className="block bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono text-sm break-all">
-                {rec.contract}
-              </code>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-xs">
-                <div className="text-zinc-500">Action</div>
-                <div className={`text-right font-semibold ${rec.side === 'BUY' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                  {rec.side} {rec.strategy.replace('_', ' ').toUpperCase()}
-                </div>
-                <div className="text-zinc-500">Strike / Expiration</div>
-                <div className="text-right font-mono">${rec.strike} · {rec.expiration}</div>
-                <div className="text-zinc-500">DTE / Δ</div>
-                <div className="text-right font-mono">{rec.dte} · {rec.delta.toFixed(3)}</div>
-                <div className="text-zinc-500">Limit Price</div>
-                <div className="text-right font-mono text-emerald-400 font-semibold">${rec.limitPrice.toFixed(2)}</div>
-                <div className="text-zinc-500">Contracts</div>
-                <div className="text-right font-mono">{rec.contracts}</div>
-                <div className="text-zinc-500">{rec.side === 'BUY' ? 'Total Debit' : 'Total Credit'}</div>
-                <div className="text-right font-mono font-semibold">
-                  ${Math.abs(rec.limitPrice * 100 * rec.contracts).toFixed(0)}
-                </div>
-              </div>
-            </div>
-
-            <div className="px-5 py-4 border-b border-zinc-800">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Score components</div>
-              <div className="space-y-1.5">
-                {([
-                  ['whale', 'Whale activity', score.components.whale],
-                  ['conviction', 'Conviction (net Δ)', score.components.conviction],
-                  ['ivEdge', 'IV edge', score.components.ivEdge],
-                  ['regime', 'Regime fit', score.components.regime],
-                  ['liquidity', 'Liquidity (OI proxy)', score.components.liquidity],
-                ] as const).map(([k, label, v]) => (
-                  <div key={k} className="flex items-center gap-3 text-xs">
-                    <span className="w-32 text-zinc-400">{label}</span>
-                    <div className="flex-1 bg-zinc-950 rounded-full h-1.5 overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-600"
-                        style={{ width: `${v}%` }}
-                      />
-                    </div>
-                    <span className="w-10 text-right font-mono text-zinc-300">{v}</span>
+        {/* Body — two columns */}
+        <div className="grid" style={{ gridTemplateColumns: '1.2fr 1fr', gap: 0 }}>
+          {/* LEFT: chart + metrics */}
+          <div style={{ padding: 20, borderRight: '1px solid var(--border-subtle)' }}>
+            {/* Chart placeholder with real sparkline */}
+            <div
+              style={{
+                height: 200,
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 8,
+                background: 'var(--obsidian-900)',
+                position: 'relative',
+                overflow: 'hidden',
+                padding: 10,
+              }}
+            >
+              <span
+                className="mono"
+                style={{
+                  position: 'absolute',
+                  top: 10,
+                  left: 14,
+                  fontSize: 10,
+                  letterSpacing: '0.1em',
+                  color: 'var(--text-500)',
+                  textTransform: 'uppercase',
+                }}
+              >
+                90-DAY DAILY CLOSES
+              </span>
+              <span
+                className="mono"
+                style={{
+                  position: 'absolute',
+                  top: 10,
+                  right: 14,
+                  fontSize: 10,
+                  color: 'var(--text-500)',
+                }}
+              >
+                {sparkData.length > 0 ? `n=${sparkData.length}` : 'no history'}
+              </span>
+              <div style={{ paddingTop: 30 }}>
+                {sparkData.length > 1 ? (
+                  <Sparkline data={sparkData} width={620} height={150} />
+                ) : (
+                  <div className="mono" style={{ textAlign: 'center', paddingTop: 60, color: 'var(--text-500)', fontSize: 11 }}>
+                    historical bars not available
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
-            <div className="px-5 py-4 border-b border-zinc-800">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Gates passed</div>
-              <div className="space-y-1 text-xs">
+            {/* Component scores grid */}
+            <div className="grid mt-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 16 }}>
+              {([
+                ['whale', 'WHALE', score.components.whale],
+                ['conviction', 'CONVICTION', score.components.conviction],
+                ['ivEdge', 'IV EDGE', score.components.ivEdge],
+                ['regime', 'REGIME', score.components.regime],
+                ['liquidity', 'LIQUIDITY', score.components.liquidity],
+                ['total', 'TOTAL', score.total],
+              ] as const).map(([k, label, v]) => (
+                <Metric key={k} k={label} v={String(v)} tone={v >= 70 ? 'pos' : v >= 50 ? 'warn' : v >= 30 ? 'neutral' : 'neg'} />
+              ))}
+            </div>
+
+            {/* Gates */}
+            <div style={{ marginTop: 18 }}>
+              <h4
+                className="mono"
+                style={{
+                  margin: '0 0 8px',
+                  fontSize: 10,
+                  letterSpacing: '0.12em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-500)',
+                  fontWeight: 500,
+                }}
+              >
+                Gates
+              </h4>
+              <div className="flex flex-col" style={{ gap: 4 }}>
                 {score.gates.map((g) => (
-                  <div key={g.name} className="flex items-center gap-2">
-                    <span className={g.passed ? 'text-emerald-400' : 'text-red-400'}>
+                  <div key={g.name} className="flex items-center mono" style={{ gap: 8, fontSize: 11 }}>
+                    <span style={{ color: g.passed ? 'var(--sage-400)' : 'var(--terra-400)' }}>
                       {g.passed ? '✓' : '✗'}
                     </span>
-                    <span className="text-zinc-400 uppercase tracking-wider w-20 text-[10px]">{g.name}</span>
-                    <span className="text-zinc-300">{g.reason}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="px-5 py-4 border-b border-zinc-800">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Exit rules</div>
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <div className="bg-zinc-950 border border-zinc-800 rounded p-2">
-                  <div className="text-zinc-500 text-[10px] uppercase">Profit target</div>
-                  <div className="font-mono text-emerald-400 font-semibold mt-1">${rec.exitRules.profitTargetPrice.toFixed(2)}</div>
-                </div>
-                <div className="bg-zinc-950 border border-zinc-800 rounded p-2">
-                  <div className="text-zinc-500 text-[10px] uppercase">Stop loss</div>
-                  <div className="font-mono text-red-400 font-semibold mt-1">${rec.exitRules.stopLossPrice.toFixed(2)}</div>
-                </div>
-                <div className="bg-zinc-950 border border-zinc-800 rounded p-2">
-                  <div className="text-zinc-500 text-[10px] uppercase">Time stop</div>
-                  <div className="font-mono text-amber-400 font-semibold mt-1">{rec.exitRules.dteCutoffDate}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="px-5 py-4 border-b border-zinc-800">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Reasoning</div>
-              <ul className="text-xs text-zinc-300 space-y-1">
-                {rec.reasoning.map((r, i) => (
-                  <li key={i} className="flex gap-2">
-                    <span className="text-emerald-500">·</span>
-                    <span>{r}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="px-5 py-4 border-b border-zinc-800 bg-emerald-950/10">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] uppercase tracking-wider text-emerald-400">Robinhood execution</div>
-                <button onClick={copySteps} className="text-[10px] text-emerald-400 hover:text-emerald-300">
-                  Copy steps
-                </button>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
-                {rec.robinhoodSteps.map((step, i) => (
-                  <span key={i} className="flex items-center gap-1.5">
-                    <span className="px-2 py-1 bg-zinc-950 border border-zinc-800 rounded text-zinc-300">{step}</span>
-                    {i < rec.robinhoodSteps.length - 1 && <span className="text-emerald-700">→</span>}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="px-5 py-4 flex items-center justify-end gap-2">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={trackPosition}
-                className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded"
-              >
-                Track as open position
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="px-5 py-8 text-center text-zinc-500 text-sm">
-            No trade recommendation. Score components and gates below.
-            <div className="mt-4 px-5">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2 text-left">Gates</div>
-              <div className="space-y-1 text-xs text-left">
-                {score.gates.map((g) => (
-                  <div key={g.name} className="flex items-center gap-2">
-                    <span className={g.passed ? 'text-emerald-400' : 'text-red-400'}>
-                      {g.passed ? '✓' : '✗'}
+                    <span
+                      style={{
+                        color: 'var(--text-500)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        fontSize: 10,
+                        width: 88,
+                      }}
+                    >
+                      {g.name}
                     </span>
-                    <span className="text-zinc-400 uppercase tracking-wider w-20 text-[10px]">{g.name}</span>
-                    <span className="text-zinc-300">{g.reason}</span>
+                    <span style={{ color: 'var(--text-300)', fontSize: 11 }}>{g.reason}</span>
                   </div>
                 ))}
               </div>
             </div>
           </div>
-        )}
 
-        {whale && (
-          <div className="px-5 py-3 border-t border-zinc-800 text-[11px] text-zinc-500">
-            Whale: vol {whale.volumeRatio.toFixed(1)}× · C/P {whale.callPutRatio.toFixed(2)} · netΔ{' '}
-            {whale.netDelta.toFixed(0)} · {whale.flowSignal.replace(/_/g, ' ')}
-            {medallion && (
+          {/* RIGHT: execution card + reasoning + steps */}
+          <div style={{ padding: 20, background: 'var(--obsidian-800)' }}>
+            {rec ? (
               <>
-                {' · '}IVR {medallion.signals.ivRank.toFixed(0)}% · VRP{' '}
-                {(medallion.signals.vrp * 100).toFixed(1)}% · regime {medallion.regime.label}
+                <ExecutionCard rec={rec} />
+
+                {rec.reasoning.length > 0 && (
+                  <div style={{ marginTop: 18 }}>
+                    <h4
+                      className="mono"
+                      style={{
+                        margin: '0 0 8px',
+                        fontSize: 10,
+                        letterSpacing: '0.12em',
+                        textTransform: 'uppercase',
+                        color: 'var(--text-500)',
+                        fontWeight: 500,
+                      }}
+                    >
+                      REASONING
+                    </h4>
+                    {rec.reasoning.map((r, i) => (
+                      <div
+                        key={i}
+                        className="grid"
+                        style={{
+                          gridTemplateColumns: '24px 1fr',
+                          gap: 10,
+                          padding: '8px 0',
+                          borderBottom: i === rec.reasoning.length - 1 ? '0' : '1px dashed var(--border-subtle)',
+                          fontSize: 13,
+                          color: 'var(--text-300)',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        <span className="mono" style={{ fontSize: 10, color: 'var(--text-500)', letterSpacing: '0.1em' }}>
+                          {String(i + 1).padStart(2, '0')}
+                        </span>
+                        <span>{r}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Robinhood steps */}
+                <div style={{ marginTop: 18 }}>
+                  <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+                    <h4
+                      className="mono"
+                      style={{
+                        margin: 0,
+                        fontSize: 10,
+                        letterSpacing: '0.12em',
+                        textTransform: 'uppercase',
+                        color: 'var(--text-500)',
+                        fontWeight: 500,
+                      }}
+                    >
+                      ROBINHOOD EXECUTION
+                    </h4>
+                    <button
+                      onClick={copySteps}
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--sage-400)',
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      COPY STEPS
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center" style={{ gap: 6 }}>
+                    {rec.robinhoodSteps.map((step, i) => (
+                      <span key={i} className="flex items-center" style={{ gap: 6 }}>
+                        <span
+                          className="mono"
+                          style={{
+                            padding: '5px 9px',
+                            background: 'var(--obsidian-900)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 4,
+                            color: 'var(--text-300)',
+                            fontSize: 11.5,
+                          }}
+                        >
+                          {step}
+                        </span>
+                        {i < rec.robinhoodSteps.length - 1 && (
+                          <span className="mono" style={{ color: 'var(--sage-500)' }}>→</span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Track button */}
+                <div style={{ marginTop: 22, display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={onClose}
+                    className="mono"
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      background: 'transparent',
+                      color: 'var(--text-300)',
+                      fontSize: 11,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 4,
+                    }}
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    onClick={trackPosition}
+                    className="mono"
+                    style={{
+                      flex: 2,
+                      padding: '10px 16px',
+                      background: tracked ? 'var(--sage-500)' : 'var(--sage-400)',
+                      color: 'var(--obsidian-950)',
+                      fontWeight: 600,
+                      fontSize: 11,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      borderRadius: 4,
+                    }}
+                  >
+                    {tracked ? '✓ TRACKED' : 'TRACK AS OPEN POSITION'}
+                  </button>
+                </div>
               </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-500)' }}>
+                <div className="mono" style={{ fontSize: 11, letterSpacing: '0.1em' }}>NO RECOMMENDATION</div>
+                <div className="mono" style={{ fontSize: 10, marginTop: 6, opacity: 0.6 }}>
+                  Gates blocked entry — see left panel
+                </div>
+              </div>
             )}
-            {earnings.earningsDate && (
-              <>{' · '}earnings {earnings.earningsDate} ({earnings.daysToEarnings}d)</>
-            )}
+          </div>
+        </div>
+
+        {/* Footer micro-strip */}
+        {whale && medallion && (
+          <div
+            className="mono"
+            style={{
+              padding: '12px 20px',
+              borderTop: '1px solid var(--border-subtle)',
+              fontSize: 10.5,
+              color: 'var(--text-500)',
+              letterSpacing: '0.04em',
+              display: 'flex',
+              gap: 18,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>VOL {whale.volumeRatio.toFixed(1)}×</span>
+            <span>C/P {whale.callPutRatio.toFixed(2)}</span>
+            <span>NETΔ {whale.netDelta.toFixed(0)}</span>
+            <span>FLOW {whale.flowSignal.replace(/_/g, ' ')}</span>
+            <span>IVR {medallion.signals.ivRank.toFixed(0)}</span>
+            <span>VRP {(medallion.signals.vrp * 100).toFixed(1)}%</span>
+            <span>REGIME {medallion.regime.label}</span>
+            {earnings.earningsDate && <span>EARN {earnings.earningsDate} ({earnings.daysToEarnings}d)</span>}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ExecutionCard({ rec }: { rec: NonNullable<ScoredTicker['score']['recommendation']> }) {
+  const total = Math.abs(rec.limitPrice * 100 * rec.contracts);
+  const sideLabel = rec.side === 'BUY' ? 'BUY' : 'SELL';
+  const cpLabel = rec.strategy.includes('call') ? 'CALL' : 'PUT';
+
+  return (
+    <div
+      style={{
+        background: 'var(--obsidian-900)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 8,
+        padding: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 14,
+      }}
+    >
+      <span
+        className="mono"
+        style={{
+          fontSize: 10,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+          color: 'var(--text-500)',
+        }}
+      >
+        EXECUTE
+      </span>
+      <div className="mono" style={{ fontSize: 18, color: 'var(--text-100)', lineHeight: 1.4 }}>
+        {sideLabel} {cpLabel} ${rec.strike}{' '}
+        <span style={{ color: 'var(--text-500)' }}>·</span> {fmtExp(rec.expiration)}
+        <br />
+        <span style={{ fontSize: 14, color: 'var(--text-300)' }}>
+          {rec.contracts}× @ <span style={{ color: 'var(--sage-400)' }}>${rec.limitPrice.toFixed(2)}</span>
+          {' · '}
+          Δ{rec.delta.toFixed(2)}
+          {' · '}
+          {rec.dte}D
+        </span>
+      </div>
+
+      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Cell k={rec.side === 'BUY' ? 'TOTAL DEBIT' : 'TOTAL CREDIT'} v={`$${total.toFixed(0)}`} tone={rec.side === 'BUY' ? 'neg' : 'pos'} />
+        <Cell k="MAX RISK" v={`$${rec.maxLoss.toFixed(0)}`} tone="neg" />
+        <Cell k="PROFIT TARGET" v={`$${rec.exitRules.profitTargetPrice.toFixed(2)}`} tone="pos" />
+        <Cell k="STOP LOSS" v={`$${rec.exitRules.stopLossPrice.toFixed(2)}`} tone="neg" />
+      </div>
+
+      <div className="mono" style={{ fontSize: 10, color: 'var(--text-500)', letterSpacing: '0.04em' }}>
+        TIME STOP {rec.exitRules.dteCutoffDate} · OCC {rec.contract}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ k, v, tone }: { k: string; v: string; tone: 'pos' | 'neg' | 'warn' | 'neutral' }) {
+  const color =
+    tone === 'pos' ? 'var(--sage-400)' :
+    tone === 'neg' ? 'var(--terra-400)' :
+    tone === 'warn' ? 'var(--amber-400)' :
+    'var(--text-100)';
+  return (
+    <div
+      style={{
+        padding: '10px 12px',
+        background: 'var(--obsidian-900)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 6,
+      }}
+    >
+      <div
+        className="mono"
+        style={{
+          fontSize: 9,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'var(--text-500)',
+          marginBottom: 4,
+        }}
+      >
+        {k}
+      </div>
+      <div className="mono" style={{ fontSize: 14, color }}>{v}</div>
+    </div>
+  );
+}
+
+function Cell({ k, v, tone }: { k: string; v: string; tone: 'pos' | 'neg' }) {
+  const color = tone === 'pos' ? 'var(--sage-400)' : 'var(--terra-400)';
+  return (
+    <div
+      style={{
+        padding: '10px 12px',
+        background: 'var(--obsidian-800)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 6,
+      }}
+    >
+      <div
+        className="mono"
+        style={{
+          fontSize: 9,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'var(--text-500)',
+          marginBottom: 4,
+        }}
+      >
+        {k}
+      </div>
+      <div className="mono" style={{ fontSize: 18, color }}>{v}</div>
     </div>
   );
 }
