@@ -22,7 +22,7 @@ const PRIMARY_NAV: NavItem[] = [
 
 const SECONDARY_NAV: NavItem[] = [
   { href: '/', num: '00', label: 'Command Center' },
-  { href: '/stocks', num: '04', label: 'Top 10 Stocks' },
+  { href: '/stocks', num: '04', label: 'Top 10 Stocks', disabled: true, disabledReason: 'Page not yet built; for now use Today\'s Trades' },
   { href: '/options', num: '05', label: 'Options Lab', disabled: true, disabledReason: 'V5.2 dashboard surfacing' },
   { href: '/risk', num: '06', label: 'Risk Engine', disabled: true, disabledReason: 'V5.2 dashboard surfacing' },
 ];

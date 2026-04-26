@@ -1,5 +1,6 @@
 import { getGroupedDaily, getPrevClose } from '@/lib/data/polygon';
 import type { HistoricalBar } from '@/lib/data/types';
+import { updateAndComputeHistory, type DailySnapshot } from '@/lib/data/persistence';
 
 const POLYGON = 'https://api.polygon.io';
 
@@ -508,11 +509,36 @@ export async function scanTicker(
   // approximate with daily-close × volume per large contract.
   const largeContractPremiumUSD = largeContracts.reduce((sum, c) => sum + c.estimatedNotional, 0);
 
-  // V5 Phase 2 — fields requiring cross-day persistence not yet built.
-  // Defaulting to neutral values; computePerfectSetupScore tolerates these.
-  const netDeltaZ = computeNetDeltaZ(netDelta, []);     // history layer pending
-  const persistenceDays = 0;                            // history layer pending
-  const cumulativeAbnormalOI = 0;                       // history layer pending
+  // V5 Phase 2 + persistence layer: today's snapshot is appended to disk
+  // and we derive the history-dependent fields from accumulated baseline.
+  // First-day-ever scan returns 0 for all three; values become meaningful
+  // after ~20 days of history.
+  const today = new Date().toISOString().slice(0, 10);
+  const dailySnap: DailySnapshot = {
+    date: today,
+    netDelta,
+    callVolume: callVol,
+    putVolume: putVol,
+    callOI,
+    putOI,
+    totalOI,
+    volumeRatio,
+    price: currentPrice,
+    largeContractPremiumUSD,
+  };
+  let netDeltaZ = 0;
+  let persistenceDays = 0;
+  let cumulativeAbnormalOI = 0;
+  try {
+    const history = await updateAndComputeHistory(ticker, dailySnap);
+    netDeltaZ = history.netDeltaZ;
+    persistenceDays = history.persistenceDays;
+    cumulativeAbnormalOI = history.cumulativeAbnormalOI;
+  } catch (err) {
+    // Disk write failure shouldn't crash the scan; log and proceed with zeros.
+    console.warn(`[whale-scanner] persistence failed for ${ticker}: ${(err as Error).message}`);
+  }
+
   const hasConcurrentOppositeLegWithin5Min = false;     // trade-tape access pending
   const borrowFeeBps = DEFAULT_BORROW_FEE_BPS;          // hardcoded; no free feed
 
